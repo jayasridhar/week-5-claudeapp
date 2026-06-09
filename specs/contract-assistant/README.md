@@ -76,9 +76,9 @@ graph TD
 - [x] [task-08-ui-primitives](./tasks/task-08-ui-primitives.md) — Shared UI primitive components (Button, Input, Card, Badge)
 
 ### Wave 3
-- [ ] [task-09-auth-pages](./tasks/task-09-auth-pages.md) — Login/signup pages and ProtectedRoute
-- [ ] [task-10-session-context](./tasks/task-10-session-context.md) — Session state, API client, sidebar session list
-- [ ] [task-11-chat-components](./tasks/task-11-chat-components.md) — Chat UI components and ChatContext
+- [x] [task-09-auth-pages](./tasks/task-09-auth-pages.md) — Login/signup pages and ProtectedRoute
+- [x] [task-10-session-context](./tasks/task-10-session-context.md) — Session state, API client, sidebar session list
+- [x] [task-11-chat-components](./tasks/task-11-chat-components.md) — Chat UI components and ChatContext
 
 ### Wave 4
 - [ ] [task-12-dashboard-integration](./tasks/task-12-dashboard-integration.md) — Wire all contexts and render complete dashboard
