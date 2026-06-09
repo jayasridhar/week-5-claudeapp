@@ -69,11 +69,11 @@ graph TD
 - [x] [task-03-supabase-schema](./tasks/task-03-supabase-schema.md) — Supabase database schema and RLS
 
 ### Wave 2
-- [ ] [task-04-supabase-client-auth](./tasks/task-04-supabase-client-auth.md) — Supabase client, shared types, AuthContext
-- [ ] [task-05-app-routing-shell](./tasks/task-05-app-routing-shell.md) — React Router setup and AppShell layout
-- [ ] [task-06-edge-function](./tasks/task-06-edge-function.md) — Supabase Edge Function with Hono routing
-- [ ] [task-07-contract-parser](./tasks/task-07-contract-parser.md) — Client-side PDF and TXT contract parser
-- [ ] [task-08-ui-primitives](./tasks/task-08-ui-primitives.md) — Shared UI primitive components (Button, Input, Card, Badge)
+- [x] [task-04-supabase-client-auth](./tasks/task-04-supabase-client-auth.md) — Supabase client, shared types, AuthContext
+- [x] [task-05-app-routing-shell](./tasks/task-05-app-routing-shell.md) — React Router setup and AppShell layout
+- [x] [task-06-edge-function](./tasks/task-06-edge-function.md) — Supabase Edge Function with Hono routing
+- [x] [task-07-contract-parser](./tasks/task-07-contract-parser.md) — Client-side PDF and TXT contract parser
+- [x] [task-08-ui-primitives](./tasks/task-08-ui-primitives.md) — Shared UI primitive components (Button, Input, Card, Badge)
 
 ### Wave 3
 - [ ] [task-09-auth-pages](./tasks/task-09-auth-pages.md) — Login/signup pages and ProtectedRoute
