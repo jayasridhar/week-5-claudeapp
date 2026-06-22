@@ -52,6 +52,10 @@ const HEADING_RE = /^\d+\.\s+\S/
 // than literal "###"/"**" characters in a paragraph.
 const MD_HEADING_RE = /^#{1,6}\s+(.+)$/
 const BOLD_LINE_RE = /^\*\*(.+)\*\*$/
+// Single-asterisk emphasis used as a mini-heading ("*Calculations:*"). Must
+// not match double-asterisk bold lines, so the wrapped content can't itself
+// start or end with "*".
+const ITALIC_LINE_RE = /^\*([^*\n]+)\*$/
 // Markdown horizontal rules ("---", "***") and code fences ("```", "```csv")
 // are pure formatting noise once content is grouped into blocks/tables.
 const HR_RE = /^(-{3,}|\*{3,})$/
@@ -98,9 +102,10 @@ function parseBlocks(rawContent: string): ContentBlock[] {
 
     const mdHeading = trimmed.match(MD_HEADING_RE)
     const boldHeading = trimmed.match(BOLD_LINE_RE)
-    if (HEADING_RE.test(trimmed) || mdHeading || boldHeading) {
+    const italicHeading = trimmed.match(ITALIC_LINE_RE)
+    if (HEADING_RE.test(trimmed) || mdHeading || boldHeading || italicHeading) {
       flushText()
-      blocks.push({ type: 'heading', text: mdHeading?.[1] ?? boldHeading?.[1] ?? trimmed })
+      blocks.push({ type: 'heading', text: mdHeading?.[1] ?? boldHeading?.[1] ?? italicHeading?.[1] ?? trimmed })
       i++
       continue
     }
