@@ -57,10 +57,20 @@ const BOLD_LINE_RE = /^\*\*(.+)\*\*$/
 const HR_RE = /^(-{3,}|\*{3,})$/
 const FENCE_RE = /^```/
 
+// Dollar amounts like "5,000" use a comma as a thousands separator, which
+// collides with comma-delimited table detection: "2024,Equity Capital,5,000"
+// splits into 4 fields instead of 3, and prose like "Net Income = 2,300 /
+// 20,500" gets mistaken for a 2-row CSV table. Collapse thousands-grouped
+// digits ("5,000", "1,234,567") back into one token before any parsing.
+function stripThousandsSeparators(content: string): string {
+  return content.replace(/\d+(?:,\d{3})+(?!\d)/g, m => m.replace(/,/g, ''))
+}
+
 // Walks the whole response line by line and groups it into ordered text/table
 // blocks, instead of grabbing only the first table-like section and dropping
 // every other section (CSV blocks, prose, multiple tables) that follows it.
-function parseBlocks(content: string): ContentBlock[] {
+function parseBlocks(rawContent: string): ContentBlock[] {
+  const content = stripThousandsSeparators(rawContent)
   const lines = content.split('\n')
   const blocks: ContentBlock[] = []
   let textBuffer: string[] = []
@@ -125,7 +135,40 @@ function parseBlocks(content: string): ContentBlock[] {
     i++
   }
   flushText()
-  return mergeAdjacentTables(dropDuplicateRawSection(blocks))
+  return pivotYearTables(mergeAdjacentTables(dropDuplicateRawSection(blocks)))
+}
+
+// The agent often emits "long" tables (one row per year+line-item, e.g.
+// "Year,Account,Amount") instead of listing years as columns. Pivot any
+// 3-column table whose first column is a year into a wide table with one row
+// per line item and years as columns, oldest year first (left to right).
+function pivotYearTables(blocks: ContentBlock[]): ContentBlock[] {
+  return blocks.map(block => (block.type === 'table' ? { ...block, rows: pivotYearTable(block.rows) } : block))
+}
+
+function pivotYearTable(rows: string[][]): string[][] {
+  const [header, ...body] = rows
+  if (header.length !== 3 || !/^years?$/i.test(header[0].trim())) return rows
+  const isYearRow = (r: string[]) => /^\d{4}$/.test(r[0]?.trim() ?? '')
+  if (body.length === 0 || body.filter(isYearRow).length < body.length * 0.8) return rows
+
+  const years = Array.from(new Set(body.filter(isYearRow).map(r => r[0].trim()))).sort((a, b) => Number(a) - Number(b))
+  const items: string[] = []
+  const seenItems = new Set<string>()
+  for (const r of body) {
+    const item = r[1]?.trim() ?? ''
+    if (item && !seenItems.has(item)) {
+      seenItems.add(item)
+      items.push(item)
+    }
+  }
+  const valueByItemYear = new Map<string, string>()
+  for (const r of body) valueByItemYear.set(`${r[1]?.trim()}|${r[0]?.trim()}`, r[2]?.trim() ?? '')
+
+  return [
+    [header[1], ...years],
+    ...items.map(item => [item, ...years.map(y => valueByItemYear.get(`${item}|${y}`) ?? '')]),
+  ]
 }
 
 // The agent sometimes restates every table a second time under a trailing
