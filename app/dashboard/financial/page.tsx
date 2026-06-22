@@ -47,6 +47,15 @@ function detectDelimiter(line: string): ',' | '|' | '\t' | null {
 // Numbered section titles like "1. Balance Sheet (INR Crore)" should stand
 // out as headings rather than blend into surrounding paragraph text.
 const HEADING_RE = /^\d+\.\s+\S/
+// Markdown headings ("### Balance Sheet") and bold-only lines used as
+// sub-headings ("**Balance Sheet**") also need to render as headings rather
+// than literal "###"/"**" characters in a paragraph.
+const MD_HEADING_RE = /^#{1,6}\s+(.+)$/
+const BOLD_LINE_RE = /^\*\*(.+)\*\*$/
+// Markdown horizontal rules ("---", "***") and code fences ("```", "```csv")
+// are pure formatting noise once content is grouped into blocks/tables.
+const HR_RE = /^(-{3,}|\*{3,})$/
+const FENCE_RE = /^```/
 
 // Walks the whole response line by line and groups it into ordered text/table
 // blocks, instead of grabbing only the first table-like section and dropping
@@ -65,15 +74,23 @@ function parseBlocks(content: string): ContentBlock[] {
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
-    if (!line.trim()) {
+    const trimmed = line.trim()
+    if (!trimmed) {
       textBuffer.push(line)
       i++
       continue
     }
 
-    if (HEADING_RE.test(line.trim())) {
+    if (HR_RE.test(trimmed) || FENCE_RE.test(trimmed)) {
+      i++
+      continue
+    }
+
+    const mdHeading = trimmed.match(MD_HEADING_RE)
+    const boldHeading = trimmed.match(BOLD_LINE_RE)
+    if (HEADING_RE.test(trimmed) || mdHeading || boldHeading) {
       flushText()
-      blocks.push({ type: 'heading', text: line.trim() })
+      blocks.push({ type: 'heading', text: mdHeading?.[1] ?? boldHeading?.[1] ?? trimmed })
       i++
       continue
     }
@@ -112,12 +129,11 @@ function parseBlocks(content: string): ContentBlock[] {
 }
 
 // The agent sometimes restates every table a second time under a trailing
-// "Raw CSV Outputs" section -- once the narrative tables already rendered,
+// "Raw CSV Outputs" section (e.g. "Raw CSV Outputs", "Example of Raw CSV
+// Output Format (Partial)") -- once the narrative tables already rendered,
 // that repeat just doubles the page length with no new information.
 function dropDuplicateRawSection(blocks: ContentBlock[]): ContentBlock[] {
-  const cutoff = blocks.findIndex(
-    b => b.type !== 'table' && b.text.split('\n').some(l => l.trim().toLowerCase() === 'raw csv outputs')
-  )
+  const cutoff = blocks.findIndex(b => b.type !== 'table' && /raw csv/i.test(b.text))
   return cutoff === -1 ? blocks : blocks.slice(0, cutoff)
 }
 
