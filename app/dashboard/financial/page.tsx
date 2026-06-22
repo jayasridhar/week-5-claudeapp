@@ -22,23 +22,31 @@ type CreditState = {
 type ContentBlock =
   | { type: 'table'; rows: string[][] }
   | { type: 'text'; text: string }
+  | { type: 'heading'; text: string }
 
 function isSeparatorLine(line: string): boolean {
   return /^[\s|:\-+]+$/.test(line) && /[-]/.test(line)
 }
 
-function splitFields(line: string, delim: ',' | '|'): string[] {
+function splitFields(line: string, delim: ',' | '|' | '\t'): string[] {
   if (delim === '|') return line.replace(/^\s*\||\|\s*$/g, '').split('|').map(c => c.trim())
+  if (delim === '\t') return line.split('\t').map(c => c.trim())
   return line.split(',').map(c => c.trim())
 }
 
-function detectDelimiter(line: string): ',' | '|' | null {
+function detectDelimiter(line: string): ',' | '|' | '\t' | null {
   const pipeCount = (line.match(/\|/g) ?? []).length
   if (pipeCount >= 2) return '|'
+  const tabCount = (line.match(/\t/g) ?? []).length
+  if (tabCount >= 1) return '\t'
   const commaCount = (line.match(/,/g) ?? []).length
   if (commaCount >= 1) return ','
   return null
 }
+
+// Numbered section titles like "1. Balance Sheet (INR Crore)" should stand
+// out as headings rather than blend into surrounding paragraph text.
+const HEADING_RE = /^\d+\.\s+\S/
 
 // Walks the whole response line by line and groups it into ordered text/table
 // blocks, instead of grabbing only the first table-like section and dropping
@@ -59,6 +67,13 @@ function parseBlocks(content: string): ContentBlock[] {
     const line = lines[i]
     if (!line.trim()) {
       textBuffer.push(line)
+      i++
+      continue
+    }
+
+    if (HEADING_RE.test(line.trim())) {
+      flushText()
+      blocks.push({ type: 'heading', text: line.trim() })
       i++
       continue
     }
@@ -93,7 +108,48 @@ function parseBlocks(content: string): ContentBlock[] {
     i++
   }
   flushText()
-  return blocks
+  return mergeAdjacentTables(dropDuplicateRawSection(blocks))
+}
+
+// The agent sometimes restates every table a second time under a trailing
+// "Raw CSV Outputs" section -- once the narrative tables already rendered,
+// that repeat just doubles the page length with no new information.
+function dropDuplicateRawSection(blocks: ContentBlock[]): ContentBlock[] {
+  const cutoff = blocks.findIndex(
+    b => b.type !== 'table' && b.text.split('\n').some(l => l.trim().toLowerCase() === 'raw csv outputs')
+  )
+  return cutoff === -1 ? blocks : blocks.slice(0, cutoff)
+}
+
+// A short narrative aside (e.g. "Add: Depreciation 14.35") in the middle of a
+// running CSV table breaks table detection early. When a table resumes right
+// after a 1-2 line aside with the same column count, treat it as a
+// continuation of the first table instead of misreading its first data row
+// as a brand new header.
+function mergeAdjacentTables(blocks: ContentBlock[]): ContentBlock[] {
+  const merged: ContentBlock[] = []
+  for (const block of blocks) {
+    if (block.type === 'table') {
+      const prev = merged[merged.length - 1]
+      const prevPrev = merged[merged.length - 2]
+      if (prev?.type === 'table' && prev.rows[0].length === block.rows[0].length) {
+        prev.rows.push(...block.rows)
+        continue
+      }
+      if (
+        prev?.type === 'text' &&
+        prev.text.split('\n').length <= 2 &&
+        prevPrev?.type === 'table' &&
+        prevPrev.rows[0].length === block.rows[0].length
+      ) {
+        prevPrev.rows.push(...block.rows)
+        merged.pop()
+        continue
+      }
+    }
+    merged.push(block)
+  }
+  return merged
 }
 
 function tableToCSV(rows: string[][]): string {
@@ -111,12 +167,12 @@ const DEFAULT_EXTRACTION_PROMPT =
 function buildCombinedCSV(blocks: ContentBlock[]): string {
   const lines: string[] = []
   for (const block of blocks) {
-    if (block.type === 'text') {
+    if (block.type === 'table') {
+      lines.push(tableToCSV(block.rows))
+    } else {
       for (const line of block.text.split('\n')) {
         if (line.trim()) lines.push(`"${line.trim().replace(/"/g, '""')}"`)
       }
-    } else {
-      lines.push(tableToCSV(block.rows))
     }
   }
   return lines.join('\n')
@@ -155,15 +211,21 @@ function ResponseContent({ content }: { content: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {blocks.map((block, i) =>
-        block.type === 'table' ? (
-          <TableBlock key={i} rows={block.rows} />
-        ) : (
+      {blocks.map((block, i) => {
+        if (block.type === 'table') return <TableBlock key={i} rows={block.rows} />
+        if (block.type === 'heading') {
+          return (
+            <h3 key={i} className="text-title text-an-fg-base font-medium mt-2">
+              {block.text}
+            </h3>
+          )
+        }
+        return (
           <p key={i} className="text-body text-an-fg-base whitespace-pre-wrap break-words">
             {block.text}
           </p>
         )
-      )}
+      })}
       {blocks.length > 0 && (
         <a
           href={URL.createObjectURL(new Blob([buildCombinedCSV(blocks)], { type: 'text/csv' }))}
