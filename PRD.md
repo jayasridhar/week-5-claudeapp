@@ -1,10 +1,8 @@
-# AI Document Assistant App
+# CapitalFusionIQ
 ## Product Requirements Document
 
-**Date:** June 10, 2026
-**Author:** Product Team
-**Status:** Draft
-**Version:** 1.1
+**Status:** WIP
+**Product:** CapitalFusionIQ — AI-assisted Capital Readiness & Capital Matching Engine for SMBs
 
 ---
 
@@ -12,353 +10,362 @@
 
 ### What problem is this solving?
 
-Analysing and extracting insight from documents is time-consuming, error-prone, and expensive for individuals and teams who lack specialised expertise. A single missed detail — in a policy, report, contract, manual, or research paper — can lead to bad decisions, wasted effort, or missed risk. Today, most users either pay experts for every review or rely on untrained staff to skim documents manually — both of which are inefficient and inadequate.
+Small and medium-sized businesses (SMBs) face significant challenges in getting adequate financing from Banks, SMB lenders and Family Offices. Key pain points include:
+
+- **Limited financial understanding:** SMB owners and managers often struggle to interpret their current potential, credit worthiness and how best to position themselves. This knowledge gap can lead to misunderstandings or missed opportunities.
+- **Manual review is slow and error-prone:** Reviewing financial data and pulling together key metrics is time-consuming and expensive. Human reviewers can miss details or make mistakes due to fatigue. Financial consulting firms often charge $100–200/hr, yet even careful analysts might overlook details — a study found an AI was 10% more accurate at spotting risks and positioning SMBs for financing.
+- **Difficulty in risk assessment and compliance:** Identifying risky clauses or ensuring regulatory compliance (e.g. privacy laws, industry regulations) is hard without specialized industry/legal knowledge and benchmarking against similar companies in the same sector.
 
 ### Who are you solving this problem for?
 
-**Primary persona:** A knowledge worker or team lead (at a business of any size) who regularly needs to understand, extract, or act on information inside documents — but lacks the time, expertise, or budget to do so thoroughly.
+**Primary users:** Financial Consulting firms which work with SMBs, Financial departments in SMBs, and financial departments in Banks and Secondary lenders across various industries.
 
-Key characteristics:
-- Industry: Any — professional services, SaaS, consulting, research, healthcare, logistics
-- Role: Operations, procurement, research, compliance, product, legal, finance
-- Behaviour: Reviews 5–20 documents per month; current process involves skimming manually or forwarding to a specialist
-- Pain: Spends 1–3 hours per document; misses non-obvious details; pays specialist rates for routine analysis
+**Industries:** Financial consulting firms, consultants, banks, lenders, finance departments of SMBs.
 
-**Secondary persona:** A specialist (analyst, paralegal, researcher, compliance officer) at a larger organisation who manages high document volume and needs AI assistance to triage and prioritise.
+**User roles:** Business owners, CEOs, CFOs, financial consultants, financial consulting firm heads who frequently review and pitch SMBs for financing.
+
+CapitalFusionIQ can serve as a first-pass review tool to flag issues, provide a credit worthiness check and a ballpark financing range before involving expensive consulting help.
 
 ### Why is this problem worth solving?
 
-- **Quantified pain:** Knowledge workers spend an average of 2.5 hours per day searching for and reading documents (IDC, 2023). AI-assisted analysis can reduce document review time by 60–80%.
-- **Market gap:** Generic LLM tools like ChatGPT require manual copy-paste, lack document context management, have no session history, and provide no structured output. Existing vertical tools are priced for enterprise, leaving SMB and mid-market users underserved.
-- **Moat:** Defensibility rests on three pillars:
-  1. **Workflow integration:** A purpose-built chat interface with persistent session history creates switching friction that generic AI tools lack.
-  2. **Feedback-trained improvement loop:** Every interaction is rated; ratings are used to improve prompts and (in v2) fine-tune the model on domain-specific patterns.
-  3. **Azure AI agent pipeline:** Enterprise-grade compliance and data residency options that users cannot configure with consumer LLM tools — a differentiator when selling to mid-market buyers with procurement requirements.
+- **Lack of potential for growth:** SMBs struggle after a certain threshold to get legitimate financing — causing them to slow down, get stuck in firefighting mode, and lose the opportunity to build something big.
+- **Efficiency and accuracy gains with AI:** AI-driven financial analysis can cut review times by over 60%. Faster reviews mean SMBs execute deals sooner.
+- **Gap in current solutions:** Typical financial management software stores financial data but lacks intelligent insight. There's a market gap for a tool that understands credit worthiness, potential for financing, and provides guidance tailored to resource-strapped SMBs.
 
-### Why Agentic AI?
+### How will you know that the problem is solved?
 
-- **Unstructured data involved:** Document content is free-form natural language with enormous variation in structure, terminology, and phrasing across domains and document types.
-- **Why rules fail:** Regex and keyword matching cannot generalise across semantic variants. Rule-based systems miss meaning; LLMs understand it.
-- **Why LLMs are necessary:** Documents require contextual reasoning — understanding that a statement later in the document modifies an earlier one, or that a term defined in an appendix changes the meaning of the main body.
-- **Differentiation from ChatGPT:** This app maintains session and document context across a full conversation, structures agent execution steps visibly in a right-panel trace, persists chat history per user in Supabase, and is purpose-built with a configurable system prompt. It saves every Q&A turn and rating — enabling a proprietary feedback dataset that generic tools cannot replicate.
-
-### How will you know the problem is solved? (Core Metrics)
-
-**North Star Metric:** Average time to complete a document analysis session
-Baseline: 90 minutes (manual review, estimated) | Target: <20 minutes | Tracked via: session start/end timestamps in Supabase
-
-**Primary Metrics:**
-
-| Metric | Baseline | Target | How tracked |
-|---|---|---|---|
-| Response accuracy (user-rated) | — | ≥4.0 / 5.0 average feedback rating | Supabase feedback table |
-| Analysis latency (P95) | — | <45s per question on a 20-page document | Server-side timing logs |
-
-**Secondary Metrics:**
-
-| Metric | Baseline | Target | How tracked |
-|---|---|---|---|
-| 30-day user retention | — | >45% | Auth + session logs |
-| Chat sessions per user per month | — | ≥3 | Supabase sessions table |
-| Feedback submission rate | — | >70% of assistant responses | Supabase feedback table |
-| NPS | — | >40 | In-app quarterly survey |
-| Cost per analysis | — | <$2.50 | Azure AI billing dashboard |
+- **Reduced review time:** At least 60% reduction in SMB financials review time for financial analysts (8–12 hours → under 1 hour)
+- **Improved accuracy:** >90% accuracy in extracting key trends and financial data; catch most risk factors (liabilities, debt, profit and sales trends)
+- **High user adoption and satisfaction:** Active SMB accounts, retention over several financial review cycles, high NPS
 
 ---
 
-## 2. Solution Definition
+## 2. Market Analysis
 
-### Pages & User Flows
+**Market Size:** Global SMB lending market ~$5.5T (2024); fintech lending sub-segment at $504B (2025)
 
-The app has four distinct page types:
+**Growth Rate:** SMB lending CAGR 13% (2024–2032); AI-in-finance CAGR ~30% (2024–2030); AI credit scoring CAGR 25.9% (2024–2031)
 
-1. **Landing page** — public marketing page, unauthenticated
-2. **Auth pages** — `/signup` and `/login`
-3. **Dashboard** — post-login home, shows KPIs + activity feed
-4. **Chat** — document upload + AI conversation interface
+**Key Drivers:**
+- 70% surge in SMB fintech lending adoption (17% → 29% of applicants, 2020–2025)
+- AI-driven underwriting cutting loan decision times from 49 days to near-instant
+- 76% of small businesses now turning to non-bank lenders; 74% choose fintech over traditional banks
+- Revenue-based financing grew 70.9% YoY, reaching $5.78B (projected $41.8B by 2028)
+- SBA guaranteed $45B across 84,000+ loans in FY2025, up 15% over FY2024
 
-**Primary flow:**
+**Gaps & Opportunities:**
 
-Landing page → Sign up / Log in → Dashboard → New Chat → Upload Document → Ask Question → Receive AI Response → Submit Feedback → Return to Dashboard
+The entire competitive field is lender-centric: Taktile, Ocrolus, and Biz2X all sell to banks and fintechs to make their underwriting faster. Nav and Lendio serve SMBs but as lead-gen/matching engines — not as intelligent financial advocates. No incumbent offers:
+- AI-driven financial package assembly from the SMB's POV
+- Sector-specific benchmarking against similar companies seeking financing
+- Family office and alternative capital access combined with readiness coaching
+- Compliance and risk clause review built for the borrower (not the lender)
 
-### Technology User Flow
+**This is CapitalFusion's open lane and clear defensible MOAT.**
 
-How the tech stack serves each step of the user journey:
+**Differentiation from generic AI tools:** This solution is specifically trained on SMB data and benchmarked against industry standards. It involves mapping against a checklist of documents, reading structured and unstructured data, and normalizing this data for that SMB as a first step — not solvable with a generic AI agent.
 
-| User step | What happens | Technology |
+---
+
+## 3. Solution Definition
+
+CapitalFusion is an AI-assisted Capital Readiness & Capital Matching engine for SMBs. The solution produces a repeatable AI-driven advisory which ingests SMB financials, diagnoses capital readiness, identifies risks, estimates debt/equity capacity, recommends optimal financing structures, and maps to likely funding counterparties.
+
+### User Flows
+
+#### Financial Ingestion Agent
+
+1. **Upload & Ingestion:** User logs in and uploads financial information (Excel, QuickBooks, PDFs, bank statements, aging reports, forecasts). Supports PDFs, DOC/DOCX, scanned images via OCR.
+2. **AI Analysis Pipeline:** Uploaded information is processed automatically, checked against a standard set of required documents for completeness. OCR extracts text from scanned documents. System extracts key financial information (P&L, cash flow, balance sheet). Flags missing data and surfaces the missing data list to the user.
+3. **Insights & Results Presentation:**
+   - Plain-language summary of financial data provided
+   - Normalized financial statements (cleansed balance sheet, P&L, cash flow)
+   - Historical trend tables
+   - Risk flags / warnings for missing or inconsistent data
+   - Compliance checks (if applicable)
+4. **User Actions:**
+   - **Chat/Q&A:** Ask questions like "What are my main debt classifications?"
+   - **Drill-down:** Click on a risk flag to see details & suggestions
+   - **Export:** Download insights as PDF or Word document
+   - **Approve & Integrate:** Proceed to Credit and Capital Readiness step
+
+#### Credit & Capital Readiness Agent
+
+- Ingests output from Financial Ingestion Agent + manually uploaded projections
+- Checks for completeness; flags missing information with a call to action
+- Analyzes: Leverage Ratios, DSCR, FCCR, working capital efficiency, liquidity profile, borrowing base indicators, covenant stress flags, cash conversion cycles
+- Presents: Capital Readiness Score, Bankability Score, Institutional Equity Readiness Score, estimated capital that can be secured
+- Drill-down explanations for each score
+- Risk flags and compliance checks
+
+#### Capital Structure Recommendation Agent
+
+- Uses readiness scores to recommend the ideal type of funding:
+  - Stable Cash Flow + Assets → Senior Debt/ABL
+  - Fast growth + weak collateral → Venture Debt/Preferred Equity
+  - EBITDA positive but overleveraged → Subordinate Debt/Structured Equity
+  - Heavy Capex expansion → Equipment Finance + Term Debt + Working Capital Line
+- Provides: plain-language summary, target raise amount, estimated pricing range, dilution implications, covenant considerations
+
+---
+
+## 4. Functional Requirements — Prototype
+
+- **Document Ingestion & OCR:** PDF (text + scanned), Microsoft Word, image files; OCR for scanned documents; handle complex layouts (multi-column, embedded tables)
+- **Key Financial Data Extraction:** Extract and normalize P&L, cash flow, balance sheet, classified chart of accounts
+- **Readiness Scoring & Capital Structure Recommendations:** Readiness scores with detailed explanations and appropriate capital structure recommendations
+- **Risk Assessment & Alerts:** AI-driven risk analysis module; human review required before sharing with customer
+- **Compliance Checks:** Industry/law-specific compliance using RAG against a knowledge base of regulations
+- **Summarization:** Natural language summary of financial information; no hallucinations; grounded strictly in provided data
+- **User Interface & Visualization:** Interactive dashboard, drill-down to source data, filtering and searching, toggle between financial summary and AI insights
+- **Integrations:** CRM (Salesforce, HubSpot), Document Management (Dropbox, Google Drive, OneDrive), Email/Slack notifications, completeness checklists
+- **Secure Cloud Storage:** AES-256 encryption at rest, TLS in transit, per-user isolation, GDPR compliance, region-specific storage, versioning
+- **User Management & Permissions:** Multi-user roles (owner, manager, external analyst); view vs. upload permissions
+- **Feedback Loop:** User corrections to AI output; feeds model improvement pipeline
+- **Human Review Gate:** All recommendations must be reviewed and approved by a human before sharing with end user
+
+---
+
+## 5. Prioritization
+
+Building components in this order (each builds on the previous):
+
+| Priority | Component | Rationale |
 |---|---|---|
-| Opens the app | Page is served with routing and API support | Next.js 14 (App Router) + TypeScript |
-| Signs up / logs in | Password hashed and stored; user ID saved to localStorage | bcryptjs + Supabase (PostgreSQL) |
-| Views dashboard | KPIs and activity feed queried from database | Supabase JS SDK |
-| Uploads a PDF | File parsed client-side into plain text | pdfjs-dist |
-| Uploads a DOCX | File parsed client-side into plain text | mammoth |
-| Asks a question | Text sent to server route; Azure called server-side only | Next.js API Route → Azure OpenAI GPT-4o |
-| Receives AI response | Response returned and rendered in chat | Azure OpenAI GPT-4o → Next.js API Route |
-| Submits feedback | Rating and comment saved to database | Supabase (PostgreSQL) |
-| App is deployed | Hosted with zero-config deployment | Vercel |
+| 1 | Financial Ingestion Agent | Entry point; OCR + normalization; low risk, known techniques |
+| 2 | Credit & Capital Readiness Agent | Requires normalized output from Agent 1 |
+| 3 | Capital Structure Recommendation Agent | Requires readiness scores from Agent 2 |
 
----
+### Risk Assessment by Component
 
-
-
----
-
-### 3.3 Dashboard (`/dashboard`)
-
-The dashboard is the post-login home screen. It gives users a quick overview of their activity and provides entry points to start or resume work.
-
-#### KPI Cards
-
-Display the following metrics in a card grid (3–4 columns, responsive):
-
-| KPI | Description | Update cadence |
+| Component | Risk Level | Key Mitigation |
 |---|---|---|
-| Total documents processed | All-time count of files uploaded | On session load |
-| Documents processed today | Files uploaded in the last 24h | On session load |
-| Total AI queries | All-time message count (user role) | On session load |
-| AI queries this week | Messages in last 7 days | On session load |
-| Active chat sessions | Sessions with messages in last 7 days | On session load |
-| Pinned chats | Count of pinned sessions | Real-time |
-| Documents uploaded | Total file uploads | On session load |
-| Average processing time | Avg ms from message send to response received | On session load |
-| Total reports generated | Count of exported sessions (v1.1) | On session load |
-| Total clauses extracted | Count of AI-identified key passages (v1.1) | On session load |
-| AI accuracy / confidence | Average feedback rating across all sessions | On session load |
-| Failed processing jobs | Count of sessions with error status | On session load |
-| Storage used | Total size of uploaded files (if persisted, v1.1) | On session load |
-
-
-
-#### Dashboard Actions
-
-- **New Chat** button (primary, top-right) → navigates to `/chat` and creates a new session
-- **Recent Chats** section below activity feed — last 5 sessions as quick-access cards (title, date, status icon) with "Open" button
-
----
-
-
-```
-
-
----
-
-## 4. Functional Requirements
-
-### Complete Feature List
-
-| ID | Requirement | Priority | Notes |
-|---|---|---|---|
-| FR-001 | Landing page with hero, features, pricing, and auth CTAs | P0 | Redirect to /dashboard if already logged in |
-| FR-002 | User signup with email/password; stored in custom `users` table with bcrypt hash | P0 | No Supabase Auth |
-| FR-003 | User login; userId + userEmail stored in localStorage | P0 | Generic error message — no field enumeration |
-| FR-004 | Auth guard: dashboard/chat redirect to /login if no userId in localStorage | P0 | — |
-| FR-005 | Dashboard KPI card grid (13 metrics) | P0 | See KPI table in §3.3 |
-| FR-006 | Dashboard recent activity feed (chronological, 50 events, load more) | P0 | User-specific events only |
-| FR-007 | "New Chat" button from dashboard creates session and navigates to chat | P0 | — |
-| FR-008 | Three-panel chat layout (sidebar 256px / centre flex-1 / right panel 304px) | P0 | — |
-| FR-009 | File upload accepts PDF and DOCX only; max 10MB; client-side validation | P0 | Error shown for unsupported types or oversized files |
-| FR-010 | Client-side PDF parsing via pdfjs-dist | P0 | Scanned PDFs detected and blocked with user-facing error |
-| FR-011 | Client-side DOCX parsing via mammoth | P0 | — |
-| FR-012 | Document text sent to `/api/chat` server-side route with every message | P0 | Azure never called from client |
-| FR-013 | AI response displayed in chat after full response received | P0 | Streaming in v1.1 |
-| FR-014 | Streaming AI responses (SSE token-by-token) | P1 | v1.1 |
-| FR-015 | Right panel execution steps — live status during AI request | P0 | 5 step states: parsing / sending / waiting / completed / error |
-| FR-016 | PDF preview in right panel with controls (zoom, fit, page count, download) | P0 | iframe with blob URL |
-| FR-017 | DOCX preview in right panel (plain text, truncated at 4,000 chars) | P0 | — |
-| FR-018 | Document preview persists while chatting | P0 | Not cleared on message send |
-| FR-019 | Feedback widget (1–5 stars + optional comment) after every assistant message | P0 | — |
-| FR-020 | Feedback saved to Supabase `feedback` table | P0 | — |
-| FR-021 | AI-generated session titles (first 55 chars of first user message + `…`) | P0 | Only when title is still "New session" |
-| FR-022 | Session list in sidebar with title, created timestamp, last-updated, status icon | P0 | — |
-| FR-023 | Pinned chats — pin/unpin from context menu; pinned section at top of sidebar | P0 | Pinned state stored in Supabase sessions table |
-| FR-024 | Rename chat — inline edit from context menu, confirmed with Enter | P0 | PATCH /api/sessions/[id] |
-| FR-025 | Delete chat — confirmation dialog before deletion | P0 | DELETE /api/sessions/[id]; cascade deletes messages + feedback |
-| FR-026 | Search sessions — real-time client-side filter by title | P0 | — |
-| FR-027 | Filter sessions by status — All / Pinned / Recent / Processing / Completed / Error | P0 | — |
-| FR-028 | Complete conversation history per session — reload all messages from Supabase on session select | P0 | Immediately clear stale messages before loading new |
-| FR-029 | Reopen past chats and continue conversation | P0 | Document text NOT reloaded (user must re-attach if needed) |
-| FR-030 | Auto-save: every user message written to Supabase before API call | P0 | — |
-| FR-031 | Infinite scroll — load 25 messages at a time when scrolling up | P1 | Cursor-based pagination |
-| FR-032 | Message timestamps — `HH:MM` per bubble; full date for messages older than today | P0 | — |
-| FR-033 | Logout — clears localStorage, redirects to /login | P0 | — |
-| FR-034 | Password reset via email | P1 | Supabase email template |
-| FR-035 | Export chat session to PDF | P2 | v1.1 |
-| FR-036 | Mobile-responsive layout | P2 | v1.1 — MVP targets desktop |
-
-### Non-Functional Requirements
-
-- **Performance:** P95 end-to-end response latency < 45s for documents up to 20 pages; response starts within 3s of submission; dashboard KPIs load within 1s
-- **Scalability:** 100 concurrent users at MVP; scale to 1,000 via Azure autoscaling in v1.1
-- **Security:** TLS 1.3 in transit; AES-256 at rest; document files never persisted server-side; bcrypt passwords; no credentials in client-side code
-- **Reliability:** 99.5% uptime SLA; AI agent errors shown as user-facing messages, never silent
-- **Usability:** Core flow (upload → question → response) completable without any onboarding by a non-technical user
-- **Compliance:** GDPR-aware — document content not stored after session; user data deletion supported (P1)
-
----
-
-## 5. Technical Requirements
-
-
-### Prompt Strategy
-
-| Task | Technique | Output |
-|---|---|---|
-| Document Q&A | Context injection: document text + conversation history + zero-shot question | Plain text with inline source references |
-| Uncertainty handling | System prompt: "If answer not in document, say so explicitly; do not speculate" | Flagged disclaimer message |
-
-**System prompt:**
-> You are an AI assistant. Answer questions based solely on the document text provided. Always cite the specific section or part you are referencing. If the answer cannot be found in the provided text, say: "I cannot find this in the document." Do not speculate beyond what the document contains.
-
-### Model Requirements
-
-| Criteria | Requirement |
-|---|---|
-| Model | Azure OpenAI GPT-4o (or equivalent Azure AI Foundry agent) |
-| Context window | ≥100k tokens |
-| Latency target | <30s per LLM call |
-| Cost target | <$1.50 per document Q&A |
-
-### Technology Choices
-
-| Item | What we use | Why |
-|---|---|---|
-| Framework | Next.js 14 (App Router) | API routes + React in one repo |
-| Language | TypeScript | Type safety |
-| Styling | Tailwind CSS | Fast + consistent with design system |
-| LLM | Azure OpenAI GPT-4o | Enterprise compliance, data residency, large context |
-| PDF parsing | pdfjs-dist | Client-side, no upload to third party |
-| DOCX parsing | mammoth | Client-side |
-| Database | Supabase (PostgreSQL) | Easy setup, real-time, JS SDK |
-| Auth | Custom `users` table + bcryptjs | Full control; no Supabase Auth |
-| Hosting | Vercel | Low ops overhead |
+| Document Ingestion & OCR | Medium | Robust OCR engine; fallback checks; manual review flag for low-confidence |
+| Risk Analysis & Compliance | High | Knowledge base of risk patterns; ML + rule checks in tandem; regular updates |
+| Financial Data Summarization & Q&A | Medium | Strict prompt engineering; RAG with source text; hallucination check in eval harness |
+| Integrations | Medium | Secure APIs (OAuth2); encrypt at rest and in transit; least-privilege access |
+| Data Privacy & Security | High | AES-256; TLS; role-based access; data residency controls; SOC 2 practices |
+| Performance & Scalability | Medium | Efficient inference pipeline; caching; hybrid model approaches; autoscaling |
+| Legal Disclaimers & Liability | Medium | Prominent disclaimers; human review gate; clear logs of AI outputs |
+| Model Bias & Domain Coverage | Medium | Diverse training corpus; user feedback; bias monitoring by sub-segment |
 
 ---
 
 ## 6. Roadmap
 
-| Release | Features | Duration | Priority |
-|---|---|---|---|
-| **v0.1 — Internal Alpha** | Landing page, auth (signup/login), dashboard (KPI cards + activity feed), chat 3-panel layout, file upload + client-side extraction, single-turn Azure AI Q&A, messages saved to Supabase | 3 weeks | P0 |
-| **v0.2 — Closed Beta** | Multi-turn conversation history, sidebar session list with search/filter/pin/rename/delete, right panel execution steps + PDF preview with controls, feedback widget, auto-save | 3 weeks | P0 |
-| **v1.0 — Public Launch** | Session title auto-generation, source citations, uncertainty disclaimer, infinite scroll, message timestamps, session status icons, password reset, performance optimisation, security audit | 4 weeks | P0 |
-| **v1.1 — Growth** | Streaming AI responses (SSE), Google OAuth, mobile-responsive layout, export session to PDF, session search improvements, activity feed real-time updates | 6 weeks | P1 |
-| **v2.0 — Scale** | Multi-document comparison, domain fine-tuning on feedback corpus, team workspaces, API access, advanced analytics dashboard | Q3 2026 | P2 |
+| Release | Features | Duration |
+|---|---|---|
+| **MVP** | Financial Ingestion Agent: outputs Balance Sheet, P&L, Cash Flow Statement & EBITDA. Flags missing data. Download completed financial package. If no data: use industry comparables via TAM/SAM/SOM. Optional: 5-year Long Range Plan starting point. | 6 weeks |
+| **MVP 1** | All MVP features + enhanced Financial Ingestion Agent with sophisticated metrics. Based on EBITDA, enable manual projection upload. Combine financial info + projections to generate readiness score benchmarked against industry. Basic next-step recommendations. | 6 weeks |
+| **Iteration** | Refine agents above. Add Capital Structure Advisory Agent. Targeted recommendations, potential lenders and lender categories. | TBD |
 
 ---
 
-## 7. Risks & Dependencies
+## 7. Evaluation Strategy
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| AI agent hallucinates content not in document | Medium | High | System prompt grounding; uncertainty disclaimer; user feedback loop |
-| Scanned PDF fails text extraction | High | Medium | Detect and warn user; recommend text-based PDF |
-| Document too long for context window | Medium | Medium | Truncate at 80k tokens; warn user |
-| Supabase RLS misconfiguration exposes other users' sessions | Low | Critical | Enforce Row-Level Security; pentest before launch |
-| Azure AI latency spikes above 45s | Low | Medium | Timeout + retry logic; progress animation; fallback error |
-| Sensitive content uploaded; data residency concern | Medium | High | Documents not persisted post-session; Azure data residency configured |
-| Dashboard KPI queries slow with large data | Low | Medium | Add indexes on `user_id` + `created_at`; aggregate on read |
+### What the Agents Are Being Evaluated On
 
----
+| # | Output | What "correct" means |
+|---|---|---|
+| 1 | Financial metric extraction | Numbers match source document within tolerance |
+| 2 | Capital readiness score | Within ±8 points of expert-assigned score; correct band |
+| 3 | Capital structure recommendation | Instrument type matches or is one step adjacent on the capital stack |
+| 4 | Risk flag identification | Catches ≥75% of expert-flagged risks; false positive rate <30% |
+| 5 | Explanation quality / no hallucination | No facts asserted that aren't in the input document |
 
-## 8. Evaluations
+### Evaluation Phases
 
-### Evaluation Plan
+| Phase | Dataset | Size | Purpose | Gate |
+|---|---|---|---|---|
+| Phase 1 — Pre-Launch | Synthetic SMB profiles | 80–100 profiles | Catch gross failures before real data | Must pass before beta access |
+| Phase 2 — Beta | Anonymized real cases from consulting firm | 20–30 cases | Validate scores against real lender outcomes | Score-to-outcome correlation before commercial launch |
+| Phase 3 — Production | Flagged live cases + synthetic additions | Ongoing | Detect model drift and regression | Triggers model refresh when metrics degrade |
 
-| Eval type | Method | Target | Cadence |
-|---|---|---|---|
-| Q&A accuracy (user-rated) | Average feedback rating | ≥4.0 / 5.0 | Weekly post-beta |
-| Source citation accuracy | Manual review: does cited section contain the answer? | >85% correct | Per release |
-| Hallucination rate | % responses where AI invents content not in document | <5% | Per release |
-| Latency (P95) | End-to-end from question submit to response complete | <45s | Per release, automated |
-| Uncertainty recall | % unanswerable questions that trigger the disclaimer | >90% | Per release |
-| Feedback submission rate | % assistant messages with a submitted rating | >70% | Weekly post-launch |
-| Dashboard load time | Time to first contentful paint on /dashboard | <1s | Per release |
+**Current state:** 12 synthetic test cases exist in `data/eval_test_cases.json` covering Canadian Food & Beverage sector.
+
+### Accuracy Targets
+
+- Risk flag detection: >85% precision and >85% recall (MVP target on synthetic test set)
+- Capital readiness score deviation: ±8 points of expert-assigned score
+- Expert review: >90% of agent recommendations rated "appropriate with no critical instrument errors"
+- Beta user satisfaction: 80% agree risk flags were relevant and capital structure was appropriate
 
 ### Launch Criteria
 
-| Stage | Go criteria |
-|---|---|
-| Alpha (5 internal users) | <1% crash rate; all P0 flows end-to-end functional; dashboard loads |
-| Beta (50 users) | Avg rating ≥3.8; hallucination rate <10%; latency <45s P95; feedback rate >50% |
-| Public launch | Avg rating ≥4.0; hallucination rate <5%; security audit passed; 30-day retention >40% |
-
----
-
-## 9. Responsible AI
-
-| Pillar | Strength | Risk | Mitigation |
+| Stage | Helpful | Honest | Harmless |
 |---|---|---|---|
-| Helpful | Reduces document review time by 60–80%; surfaces details non-experts miss | Response too long or too technical | System prompt specifies plain English; max 200 words per explanation |
-| Honest | All answers grounded in uploaded document; source references cited | LLM may hallucinate or misread ambiguous content | "Cannot find in document" disclaimer; user feedback flags errors |
-| Harmless | Domain is factual text; no personal data in analysis | User acts on incorrect output without expert review | Prominent disclaimer: "Not professional advice — consult a qualified expert" |
-
-**Disclaimer shown on every session:**
-> "This app provides AI-generated analysis only. Always consult a qualified professional before acting on the findings."
+| Launch (1–2%) | 60% | 75% | <5% |
+| Beta (2–10%) | 70% | 85% | <3% |
+| Launch | 80% | 90% | <2% |
 
 ---
 
-## 10. Pricing
+## 8. Data Requirements
 
-### Development Costs (MVP)
+### Input Data (User-Supplied)
 
-| Item | Estimated cost |
-|---|---|
-| Azure OpenAI API credits (dev + test) | $500 |
-| Supabase Pro (3 months) | $75 |
-| Vercel Pro (3 months) | $60 |
-| Security pentest | $2,000 |
-| Miscellaneous | $200 |
-| **Infrastructure subtotal** | **~$2,835** |
-| Lead Full-Stack Engineer (3 months) | $25,000 |
-| Backend / AI Integration Engineer (3 months) | $20,000 |
-| Product Manager (3 months) | $15,000 |
-| UX Designer (part-time, 3 months) | $8,000 |
-| QA Engineer (part-time, 3 months) | $6,000 |
-| **Manpower subtotal** | **$74,000** |
-| **Total MVP** | **~$76,835** |
+| Input Type | Examples | Processing Required |
+|---|---|---|
+| Text-based PDF | Accountant-prepared P&L | Direct text extraction |
+| Scanned PDF / Image | Paper statements, photos | OCR → text extraction |
 
-### Operational Costs (500 active users/month)
+**Three canonical artifacts** the Ingestion Agent must always produce: normalized Profit & Loss statement, Balance Sheet, and Cash Flow Statement (derived from P&L + Balance Sheet if missing). Plus: Vertical analysis, Horizontal analysis, and additional metrics (CCC, DSO, DIO, DPO).
 
-| Item | Monthly |
-|---|---|
-| Azure OpenAI API (5,000 analyses × ~$0.50) | $2,500 |
-| Supabase Pro | $25 |
-| Vercel Pro | $20 |
-| Monitoring (Sentry + Azure Monitor) | $50 |
-| **Total** | **~$2,595** |
+### Reference / Benchmark Data
 
-Cost per analysis: ~$0.52 (infra) + ~$1.50 (Azure AI) = **~$2.02** — within the <$2.50 target.
+Current benchmark layer covers Canadian Food & Beverage (15 public companies in `data/canada_food_beverage_financials.json`).
 
-### Pricing Tiers
+**Benchmark expansion plan:**
+- Phase 1 (Pre-launch): Canada F&B only
+- Phase 2 (Beta): Add Canadian Manufacturing, Retail, Services
+- Phase 3 (Production): US comparable datasets for cross-border financing
 
-| Plan | Price | Includes | Target user |
+**Key benchmarked metrics per sector:** EBITDA margin, gross margin, debt-to-equity, ROE, DSCR thresholds
+
+### Synthetic Dataset Stratification
+
+| Sub-segment | Target Profiles | Scenario Split |
+|---|---|---|
+| Food Retail / Grocery | 12–15 | 40% borderline (score 45–60) |
+| QSR / Franchise | 10–12 | 15% clearly fundable |
+| Food Manufacturer / CPG | 15–18 | 20% high-risk / distressed |
+| Beverage Producer | 10–12 | 10% declined |
+| Distributor / Wholesaler | 10–12 | 15% low-moderate risk |
+| Specialty / Artisan | 8–10 | — |
+| Food Tech / Delivery | 6–8 | — |
+
+Input quality varied: 40% clean PDF, 20% Excel, 20% good-quality scan, 10% poor-quality/partial OCR, 10% missing one financial statement.
+
+### Data Security & Compliance
+
+- All uploaded documents encrypted at rest (AES-256) and in transit (TLS/SSL)
+- Per-user data isolation with role-based access controls
+- Support for data residency requirements (Canadian-hosted storage for Canadian SMBs)
+- GDPR-compliant handling for any EU-linked personal data
+- SOC 2 practices for the SaaS platform layer
+- Document versioning retained for audit
+
+---
+
+## 9. Prompt Strategy
+
+### Agent 1: Financial Ingestion Agent
+**Primary technique: Structured Output + Grounding**
+- System prompt defines exact output schema (Excel/CSV/JSON with P&L, Balance Sheet, Cash Flow fields)
+- Strict grounding: extract only values present in the uploaded document; if a field is not found, output null with a `missing_reason` flag
+- Missing document detection: checklist of required documents; agent flags gaps before proceeding
+
+### Agent 2: Credit & Capital Readiness Agent
+**Primary techniques: Chain-of-Thought (CoT) + RAG + Few-Shot**
+- CoT: reason step-by-step through each sub-score (Profitability, Liquidity, Leverage, Growth Trajectory, Business Quality) before producing composite readiness score
+- RAG: retrieves sector benchmark percentiles from Canada F&B benchmark database at runtime
+- Few-shot: 12 existing eval test cases serve as scored anchor examples
+
+### Agent 3: Capital Structure Recommendation Agent _(not in initial scope)_
+**Primary techniques: Decision-Tree Prompting + Constraint-Based Generation**
+- Explicit decision framework mapping readiness profiles to instrument types
+- Output constrained to defined instrument taxonomy
+
+### Cross-Agent Anti-Hallucination Controls
+- Explicit instruction: "Do not generate, estimate, or hallucinate financial figures not present in the provided document"
+- Output validation layer: post-generation check comparing all numbers cited in narrative against extracted metrics JSON
+- Confidence thresholds: low-confidence extractions flagged to user rather than silently passed downstream
+
+---
+
+## 10. Model Requirements
+
+| Criteria | Requirement | Rationale |
+|---|---|---|
+| Open vs. Closed Source | Closed Source (MVP); open-source long-term | Faster time-to-market; GPT-4 class quality out of the box |
+| Context Window | 128K+ | Long SMB financial documents (50+ pages) |
+| Modalities | Text, Vision | Support PDFs, Excel, images; OCR pre-processing for scanned docs |
+| Fine-Tuning | Not in Phase 1; SFT in Phase 2+ | Phase 1 uses prompt engineering + RAG; fine-tune when 200+ labeled cases available |
+| Latency | High priority | Real-time Q&A; target <10s for summary |
+| Accuracy | High priority | Financial domain; hallucinations are critical failures |
+| Context | Large (≥32K tokens) | Full financial document in one pass |
+| Integration | API accessible | Reliable uptime; secure; scalable |
+
+### Model Trade-offs
+
+| Option | Pros | Cons | Cost |
 |---|---|---|---|
-| Free trial | $0 / 14 days | 5 document analyses | All new signups |
-| Starter | $29 / month | 20 analyses, 1 user | Solo user, freelancer |
-| Growth | $79 / month | 100 analyses, 5 users | SMB team |
-| Pro | $199 / month | Unlimited analyses, 20 users, priority support | Mid-market |
+| GPT-4 via API | State-of-the-art; large context; no infra overhead | Higher per-token cost; data leaves environment | High variable |
+| Fine-tuned Open-Source LLM | Full data control; lower incremental cost at scale | GPU infra needed; lower out-of-box quality; smaller context | High fixed, low variable |
+| Hybrid (GPT-3.5 + GPT-4) | Cost-optimized; simpler tasks on cheaper model | Two-model complexity; context limits on GPT-3.5 | Medium |
+
+**Initial approach:** GPT-4 API for quality; re-evaluate to fine-tuned open model as labeled dataset grows.
 
 ---
 
-## 11. Open Questions
+## 11. Responsible AI
 
-1. **Azure AI endpoint:** Which specific Azure AI Foundry endpoint and model deployment? Who owns the subscription and budget? (Owner: Engineering Lead — resolve before v0.1)
-2. **Scanned document handling:** Support OCR via Azure Document Intelligence in v1.0, or strictly block scanned uploads? (Owner: PM + Engineering — resolve before v0.2)
-3. **Data retention:** Delete document text immediately after session, or retain 24h to support session reload? (Owner: PM — resolve before public launch)
-4. **Dashboard KPI queries:** Computed on-read from existing tables, or materialised into a separate `analytics` table? (Owner: Engineering — resolve in v0.1 sprint planning)
-5. **Pinned chats storage:** Stored in `sessions.pinned` column (recommended) or a separate `pinned_sessions` table? (Owner: Engineering — resolve in v0.1)
-6. **Feedback data use:** Are ratings + comments used for model fine-tuning in v2? What consent mechanism is required? (Owner: PM — resolve before v1.1)
+| # | Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|---|
+| 1 | Hallucination / Fabricated Financial Data | High | Critical | Grounding prompts + post-generation validation; hallucination check in eval harness; human review required before sharing with lenders |
+| 2 | Biased Credit Scoring | Medium | High | Synthetic dataset stratified across sub-segments; bias audits on readiness scores; explainable sub-scores |
+| 3 | SMB Data Privacy Breach | Low | Critical | AES-256 at rest; TLS in transit; per-user isolation; GDPR-compliant; Canadian data residency; SOC 2 |
+| 4 | Over-reliance on AI Recommendations | High | High | All recommendations require human sign-off; UI surfaces confidence levels prominently; "not financial advice" disclaimer |
+| 5 | Regulatory Non-Compliance (XAI) | Medium | High | Every score includes drill-down explanation; audit trail of inputs → metrics → scores; meets banking regulator XAI requirements |
+| 6 | OCR Errors Propagating Into Scores | High | High | Confidence scores on each OCR-extracted field; low-confidence fields flagged before analysis proceeds |
+| 7 | Model Drift / Score Degradation | Medium | Medium | Phase 3 continuous monitoring; automated metric tracking triggers model refresh |
+| 8 | Customer Concentration Risk Missed | Medium | High | Explicit risk flag category in label schema; agent flags when top-N customer concentration exceeds 50% of revenue |
+| 9 | Adverse Financial Outcomes from AI-Guided Decisions | Low | Critical | Positioned as readiness tool, not lending decision system; lender acceptance rate tracked; conditional approvals |
+| 10 | Prompt Injection via Uploaded Documents | Low | High | Documents processed through sandboxed extraction pipeline; structured data (not raw text) used as context |
 
 ---
 
-## 12. Assumptions
+## 12. Core Metrics
 
-- Azure AI agent supports ≥100k token context window, sufficient for ~80-page documents.
-- Custom `users` table (not Supabase Auth); user ID managed via localStorage.
-- Documents are text-based, not scanned images; scanned support is out of scope for MVP.
-- Right-panel execution steps are simulated client-side based on known pipeline stages; full agent-side event streaming is a v1.1 enhancement.
-- Dashboard KPI data is derived from existing Supabase tables on read (no separate analytics table in MVP).
-- Team size for MVP: 3–4 engineers. Timeline: 10 weeks from kickoff (v0.1: 3w, v0.2: 3w, v1.0 hardening: 4w).
-- Feedback ratings used for monitoring and prompt improvement only — no model fine-tuning in MVP without explicit consent mechanisms.
-- No multi-tenancy or team workspaces in MVP; individual accounts only.
-- GDPR compliance addressed by not persisting document content beyond the session; full legal review before public launch.
+**North Star Metric:** Funded SMBs / Month (leading proxy: Readiness Score Improvement over 90 days)
+
+### Primary Metrics
+
+| Metric | Definition | Target |
+|---|---|---|
+| Financial Package Accuracy Rate | % of AI-generated financial packages accepted by lenders without major revision | >85% within 6 months of launch |
+| Time-to-Ready | From SMB signup to lender-ready financial package | <24 hrs vs. 2–3 week consultant baseline |
+
+### Secondary Metrics
+
+1. **Adoption & Engagement:** Monthly Active SMBs (MAU); Readiness Score completion rate; return visit rate within 30 days
+2. **Quality & Trust:** Lender acceptance rate; AI vs. consultant accuracy delta; false positive rate on risk/compliance flags
+3. **Business Outcomes:** Avg. loan size secured; SMB revenue growth 12 months post-funding; lender referral conversion rate
+4. **Cost & Efficiency:** Cost per funded SMB; support ticket rate
+5. **Revenue:** MRR/ARR
+
+---
+
+## 13. Pricing Strategy
+
+- Displacing $100–$200/hr financial consultants creates compelling ROI: $99–$299/month subscription replaces $3K–$8K in consultant fees for a single financing round
+- Lender-side monetization (charging banks/family offices a referral or API fee for pre-qualified deal flow) could create a dual-sided revenue model with higher LTV
+
+---
+
+## 14. Launch Plan
+
+| Stage | Timeframe | Criteria to Exit |
+|---|---|---|
+| Internal Alpha (Friends & Family) | Month 5–6 | All major bugs resolved; core functionality works; latency <1 min average; security basics in place |
+| Private Beta (Invite-Only, 5–7 companies) | Month 6–8 | Beta user satisfaction ≥80%; accuracy thresholds met; latency <30s in 90% of cases |
+| Staged Launch (Graduated Rollout) | Month 9 | System stability; A/B tests on feature variants; moderate user base onboarded |
+| General Availability | Post Month 9 | All GA criteria met (see below) |
+
+### GA Go/No-Go Criteria
+
+- **Accuracy:** No known critical issue where AI would consistently mislead users
+- **UX:** Major usability complaints from beta resolved; responsive across common browsers
+- **Latency & Scalability:** Handle 20 concurrent SMB analyses without degraded performance; 95th percentile analysis time <90 seconds
+- **Security & Compliance:** Security audit passed; data encrypted; privacy policy in place; disclaimers on all AI outputs
+- **Support Readiness:** Customer support channels ready
+
+---
+
+## 15. Open Questions
+
+- Sector expansion beyond Canadian F&B in Phase 2 — which sectors to prioritize?
+- Pitchbook / Sedar integration for industry benchmarks — procurement and data licensing
+- QuickBooks / accounting software direct integrations — Phase 1 or Phase 2?
+- Data residency requirements for US expansion
+- Fine-tuning dataset size threshold — confirm 200 labeled cases is sufficient trigger

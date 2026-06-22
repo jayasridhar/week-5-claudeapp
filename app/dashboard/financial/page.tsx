@@ -1,0 +1,553 @@
+'use client'
+
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { Upload, X, Send, Download, FileText, Eye, EyeOff } from 'lucide-react'
+
+type Message = {
+  role: 'user' | 'assistant'
+  content: string
+  id: string
+}
+
+type CreditState = {
+  pdfUrl?: string
+  generating?: boolean
+  sending?: boolean
+  showPreview?: boolean
+  summary?: string
+  error?: string
+}
+
+type ContentBlock =
+  | { type: 'table'; rows: string[][] }
+  | { type: 'text'; text: string }
+
+function isSeparatorLine(line: string): boolean {
+  return /^[\s|:\-+]+$/.test(line) && /[-]/.test(line)
+}
+
+function splitFields(line: string, delim: ',' | '|'): string[] {
+  if (delim === '|') return line.replace(/^\s*\||\|\s*$/g, '').split('|').map(c => c.trim())
+  return line.split(',').map(c => c.trim())
+}
+
+function detectDelimiter(line: string): ',' | '|' | null {
+  const pipeCount = (line.match(/\|/g) ?? []).length
+  if (pipeCount >= 2) return '|'
+  const commaCount = (line.match(/,/g) ?? []).length
+  if (commaCount >= 1) return ','
+  return null
+}
+
+// Walks the whole response line by line and groups it into ordered text/table
+// blocks, instead of grabbing only the first table-like section and dropping
+// every other section (CSV blocks, prose, multiple tables) that follows it.
+function parseBlocks(content: string): ContentBlock[] {
+  const lines = content.split('\n')
+  const blocks: ContentBlock[] = []
+  let textBuffer: string[] = []
+
+  function flushText() {
+    const text = textBuffer.join('\n').trim()
+    if (text) blocks.push({ type: 'text', text })
+    textBuffer = []
+  }
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (!line.trim()) {
+      textBuffer.push(line)
+      i++
+      continue
+    }
+
+    const delim = detectDelimiter(line)
+    if (delim) {
+      const fields = splitFields(line, delim)
+      if (fields.length >= 2) {
+        const rows: string[][] = [fields]
+        let j = i + 1
+        while (j < lines.length) {
+          const next = lines[j]
+          if (!next.trim()) break
+          if (isSeparatorLine(next)) { j++; continue }
+          const nextDelim = detectDelimiter(next)
+          if (nextDelim !== delim) break
+          const nextFields = splitFields(next, delim)
+          if (nextFields.length !== fields.length) break
+          rows.push(nextFields)
+          j++
+        }
+        if (rows.length >= 2) {
+          flushText()
+          blocks.push({ type: 'table', rows })
+          i = j
+          continue
+        }
+      }
+    }
+
+    textBuffer.push(line)
+    i++
+  }
+  flushText()
+  return blocks
+}
+
+function tableToCSV(rows: string[][]): string {
+  return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
+}
+
+const DEFAULT_EXTRACTION_PROMPT =
+  'Extract and normalize the financial data from the uploaded document. Produce normalized CSV ' +
+  'outputs for the Balance Sheet, Income Statement, Statement of Retained Earnings, and Cash Flow ' +
+  'Statement (estimate the Cash Flow Statement if it is not provided). Include vertical analysis, ' +
+  'horizontal analysis (YoY % change), a 5-year projection, and additional metrics (DSO, DIO, DPO, CCC).'
+
+// Dumps the entire response into one CSV, in document order: headings and
+// narrative text become single-column rows, tables become multi-column rows.
+function buildCombinedCSV(blocks: ContentBlock[]): string {
+  const lines: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      for (const line of block.text.split('\n')) {
+        if (line.trim()) lines.push(`"${line.trim().replace(/"/g, '""')}"`)
+      }
+    } else {
+      lines.push(tableToCSV(block.rows))
+    }
+  }
+  return lines.join('\n')
+}
+
+function TableBlock({ rows }: { rows: string[][] }) {
+  const [header, ...body] = rows
+  return (
+    <div className="overflow-x-auto rounded-lg border border-an-border">
+      <table className="w-full text-body-sm text-an-fg-base">
+        <thead>
+          <tr className="bg-an-bg-surface">
+            {header.map((h, i) => (
+              <th key={i} className="px-3 py-2 text-left text-label text-an-fg-subtle border-b border-an-border font-medium">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((row, i) => (
+            <tr key={i} className={i % 2 === 0 ? 'bg-an-bg-base' : 'bg-an-bg-subtle'}>
+              {row.map((cell, j) => (
+                <td key={j} className="px-3 py-2 border-b border-an-border">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ResponseContent({ content }: { content: string }) {
+  const blocks = parseBlocks(content)
+
+  return (
+    <div className="flex flex-col gap-4">
+      {blocks.map((block, i) =>
+        block.type === 'table' ? (
+          <TableBlock key={i} rows={block.rows} />
+        ) : (
+          <p key={i} className="text-body text-an-fg-base whitespace-pre-wrap break-words">
+            {block.text}
+          </p>
+        )
+      )}
+      {blocks.length > 0 && (
+        <a
+          href={URL.createObjectURL(new Blob([buildCombinedCSV(blocks)], { type: 'text/csv' }))}
+          download="financial_data.csv"
+          className="self-start flex items-center gap-1.5 text-caption text-an-accent hover:underline"
+        >
+          <Download size={12} strokeWidth={1.5} />
+          Download all as CSV
+        </a>
+      )}
+    </div>
+  )
+}
+
+export default function FinancialPage() {
+  const router = useRouter()
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [file, setFile] = useState<{ name: string; text: string } | null>(null)
+  const [fileLoading, setFileLoading] = useState(false)
+  const [creditState, setCreditState] = useState<Record<string, CreditState>>({})
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const userId = localStorage.getItem('userId')
+    if (!userId) router.replace('/login')
+  }, [router])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px'
+    }
+  }, [input])
+
+  async function handleFile(f: File) {
+    setFileLoading(true)
+    setError('')
+    try {
+      const name = f.name
+      const lower = name.toLowerCase()
+      let text = ''
+
+      if (lower.endsWith('.csv') || lower.endsWith('.txt') || lower.endsWith('.json')) {
+        text = await f.text()
+      } else if (lower.endsWith('.pdf')) {
+        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist')
+        GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        const buf = await f.arrayBuffer()
+        const pdf = await getDocument({ data: buf }).promise
+        const pages = await Promise.all(
+          Array.from({ length: pdf.numPages }, (_, i) =>
+            pdf.getPage(i + 1).then(p => p.getTextContent()).then(tc =>
+              tc.items.map((it: any) => it.str).join(' ')
+            )
+          )
+        )
+        text = pages.join('\n')
+      } else if (lower.endsWith('.docx')) {
+        const mammoth = await import('mammoth')
+        const buf = await f.arrayBuffer()
+        const result = await mammoth.extractRawText({ arrayBuffer: buf })
+        text = result.value
+      } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        const XLSX = await import('xlsx')
+        const buf = await f.arrayBuffer()
+        const wb = XLSX.read(buf, { type: 'array' })
+        text = wb.SheetNames.map(name => {
+          const ws = wb.Sheets[name]
+          return `Sheet: ${name}\n${XLSX.utils.sheet_to_csv(ws)}`
+        }).join('\n\n')
+      } else {
+        setError('Unsupported file type. Use PDF, DOCX, CSV, Excel, JSON, or TXT.')
+        return
+      }
+
+      setFile({ name, text })
+      await sendMessage(DEFAULT_EXTRACTION_PROMPT, {
+        fileOverride: { name, text },
+        displayMessage: `Analyze ${name}`,
+      })
+    } catch {
+      setError('Failed to read file. Please try again.')
+    } finally {
+      setFileLoading(false)
+    }
+  }
+
+  async function sendMessage(
+    message: string,
+    opts?: { fileOverride?: { name: string; text: string }; displayMessage?: string }
+  ) {
+    if (!message || loading) return
+    setError('')
+    const activeFile = opts?.fileOverride ?? file
+    const id = crypto.randomUUID()
+    setMessages(prev => [...prev, { role: 'user', content: opts?.displayMessage ?? message, id }])
+    setLoading(true)
+
+    try {
+      const res = await fetch('/api/financial-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileText: activeFile?.text ?? '',
+          fileName: activeFile?.name ?? '',
+          userMessage: message,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error ?? 'Request failed.')
+        return
+      }
+      setMessages(prev => [...prev, { role: 'assistant', content: data.content, id: crypto.randomUUID() }])
+    } catch {
+      setError('Something went wrong. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSend() {
+    const message = input.trim()
+    if (!message) return
+    setInput('')
+    await sendMessage(message)
+  }
+
+  function patchCreditState(id: string, patch: Partial<CreditState>) {
+    setCreditState(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }))
+  }
+
+  async function handleGeneratePdf(msg: Message) {
+    patchCreditState(msg.id, { generating: true, error: undefined })
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+      const margin = 40
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const maxWidth = pageWidth - margin * 2
+      let y = margin
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.text('Financial Normalization Output', margin, y)
+      y += 22
+
+      doc.setFont('courier', 'normal')
+      doc.setFontSize(9)
+      const lineHeight = 12
+
+      for (const rawLine of msg.content.split('\n')) {
+        const wrapped: string[] = doc.splitTextToSize(rawLine || ' ', maxWidth)
+        for (const line of wrapped) {
+          if (y > pageHeight - margin) {
+            doc.addPage()
+            y = margin
+          }
+          doc.text(line, margin, y)
+          y += lineHeight
+        }
+      }
+
+      const blob = doc.output('blob')
+      const url = URL.createObjectURL(blob)
+      patchCreditState(msg.id, { pdfUrl: url, generating: false, showPreview: true })
+    } catch {
+      patchCreditState(msg.id, { generating: false, error: 'Failed to generate PDF.' })
+    }
+  }
+
+  async function handleSendToCredit(msg: Message) {
+    patchCreditState(msg.id, { sending: true, error: undefined })
+    try {
+      const res = await fetch('/api/credit-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ normalizedText: msg.content }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        patchCreditState(msg.id, { sending: false, error: data.error ?? 'Request failed.' })
+        return
+      }
+      patchCreditState(msg.id, { sending: false, summary: data.content })
+    } catch {
+      patchCreditState(msg.id, { sending: false, error: 'Something went wrong. Please try again.' })
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex-shrink-0 h-12 border-b border-an-border flex items-center px-6 gap-3">
+        <h2 className="text-body font-medium text-an-fg-base">Financial Normalization</h2>
+        <span className="text-label px-2 py-0.5 rounded-full bg-an-accent-subtle text-an-accent">Beta</span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-[720px] mx-auto px-6 py-6 flex flex-col gap-6">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-10 h-10 rounded-full bg-an-accent-subtle flex items-center justify-center mb-4">
+                <span className="w-2 h-2 rounded-full bg-an-accent" />
+              </div>
+              <p className="text-title text-an-fg-base mb-2">Financial Normalization Agent</p>
+              <p className="text-body text-an-fg-subtle max-w-sm">
+                Upload a financial document (PDF, Excel, CSV) and ask questions to normalize and analyse the data.
+              </p>
+            </div>
+          )}
+
+          {messages.map(msg => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'items-start gap-3'}`}>
+              {msg.role === 'assistant' && (
+                <span className="mt-1.5 flex-shrink-0 w-2 h-2 rounded-full bg-an-accent" />
+              )}
+              <div className={`${msg.role === 'user' ? 'max-w-[75%]' : 'flex-1 min-w-0'}`}>
+                {msg.role === 'user' ? (
+                  <div
+                    className="px-4 py-3 text-body text-an-fg-base"
+                    style={{
+                      background: 'var(--an-accent-subtle)',
+                      border: '1px solid rgba(217,119,87,0.20)',
+                      borderRadius: '12px 12px 4px 12px',
+                    }}
+                  >
+                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  </div>
+                ) : (
+                  <>
+                    <ResponseContent content={msg.content} />
+                    <div className="mt-4 flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleGeneratePdf(msg)}
+                          disabled={creditState[msg.id]?.generating}
+                          className="flex items-center gap-1.5 h-7 px-2.5 rounded border border-an-border text-body-sm text-an-fg-subtle hover:bg-an-bg-elevated hover:text-an-fg-base transition-colors disabled:opacity-50"
+                        >
+                          <FileText size={12} strokeWidth={1.5} />
+                          {creditState[msg.id]?.generating
+                            ? 'Generating PDF…'
+                            : creditState[msg.id]?.pdfUrl
+                              ? 'Regenerate PDF'
+                              : 'Generate PDF'}
+                        </button>
+                        {creditState[msg.id]?.pdfUrl && (
+                          <>
+                            <a
+                              href={creditState[msg.id]?.pdfUrl}
+                              download="financial_normalization.pdf"
+                              className="flex items-center gap-1.5 text-caption text-an-accent hover:underline"
+                            >
+                              <Download size={12} strokeWidth={1.5} />
+                              Download PDF
+                            </a>
+                            <button
+                              onClick={() => patchCreditState(msg.id, { showPreview: !creditState[msg.id]?.showPreview })}
+                              className="flex items-center gap-1.5 text-caption text-an-fg-subtle hover:text-an-fg-base"
+                            >
+                              {creditState[msg.id]?.showPreview ? <EyeOff size={12} strokeWidth={1.5} /> : <Eye size={12} strokeWidth={1.5} />}
+                              {creditState[msg.id]?.showPreview ? 'Hide preview' : 'Preview PDF'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {creditState[msg.id]?.showPreview && creditState[msg.id]?.pdfUrl && (
+                        <iframe
+                          src={creditState[msg.id]?.pdfUrl}
+                          className="w-full h-72 rounded-lg border border-an-border"
+                        />
+                      )}
+
+                      {creditState[msg.id]?.pdfUrl && (
+                        <button
+                          onClick={() => handleSendToCredit(msg)}
+                          disabled={creditState[msg.id]?.sending}
+                          className="self-start flex items-center gap-1.5 h-7 px-3 rounded bg-an-accent hover:bg-an-accent-hover disabled:opacity-50 text-white text-label transition-colors"
+                        >
+                          {creditState[msg.id]?.sending ? 'Sending…' : 'Send to Credit Readiness Agent'}
+                        </button>
+                      )}
+
+                      {creditState[msg.id]?.error && (
+                        <p className="text-caption text-an-error">{creditState[msg.id]?.error}</p>
+                      )}
+
+                      {creditState[msg.id]?.summary && (
+                        <div className="mt-2 p-4 rounded-lg border border-an-border" style={{ background: 'var(--an-bg-surface)' }}>
+                          <p className="text-label text-an-accent mb-3 uppercase tracking-wide">Credit Readiness Summary</p>
+                          <ResponseContent content={creditState[msg.id]!.summary!} />
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex items-center gap-3">
+              <span className="flex-shrink-0 w-2 h-2 rounded-full bg-an-accent" />
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-an-fg-muted animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-an-fg-muted animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-an-fg-muted animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      </div>
+
+      {/* Composer */}
+      <div className="px-6 pb-6 flex-shrink-0">
+        <div className="max-w-[720px] mx-auto">
+          {/* File chip */}
+          {file && (
+            <div className="flex items-center gap-2 mb-2">
+              <span className="flex items-center gap-1.5 h-7 px-2.5 bg-an-bg-surface border border-an-border rounded-full text-body-sm text-an-fg-subtle">
+                {file.name}
+                <button onClick={() => setFile(null)} className="text-an-fg-muted hover:text-an-fg-base transition-colors">
+                  <X size={12} strokeWidth={2} />
+                </button>
+              </span>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-an-border p-3" style={{ background: 'var(--an-bg-surface)' }}>
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
+              placeholder="Ask about the financial data…"
+              rows={1}
+              disabled={loading}
+              className="w-full bg-transparent border-none text-body text-an-fg-base placeholder:text-an-fg-muted resize-none focus:outline-none disabled:opacity-50 min-h-[24px] max-h-[200px] overflow-y-auto"
+            />
+            <div className="flex items-center justify-between mt-2">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.csv,.xlsx,.xls,.json,.txt"
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={fileLoading}
+                  className="flex items-center gap-1.5 h-7 px-2.5 rounded border border-an-border text-body-sm text-an-fg-subtle hover:bg-an-bg-elevated hover:text-an-fg-base transition-colors disabled:opacity-50"
+                >
+                  <Upload size={12} strokeWidth={1.5} />
+                  {fileLoading ? 'Reading…' : 'Upload file'}
+                </button>
+                <span className="text-caption text-an-fg-muted">PDF, Excel, CSV, JSON, TXT</span>
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || loading}
+                className="w-8 h-8 rounded-full bg-an-accent hover:bg-an-accent-hover disabled:opacity-40 flex items-center justify-center transition-colors duration-150 flex-shrink-0"
+              >
+                <Send size={14} strokeWidth={2} className="text-white" />
+              </button>
+            </div>
+          </div>
+
+          {error && <p className="text-caption text-an-error text-center mt-2">{error}</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
