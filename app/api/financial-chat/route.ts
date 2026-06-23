@@ -21,14 +21,17 @@ export async function POST(req: NextRequest) {
     const token = await getToken()
 
     const formatInstructions = `FORMATTING RULES (follow exactly):
-- Output ALL tables as plain comma-separated values (CSV). Every row must have exactly the same number of comma-separated fields as the header row. Count the commas — if the header has 11 commas, every data row must also have exactly 11 commas.
-- NEVER concatenate adjacent numeric values without a comma between them. Each number, percentage, or projected value is a separate field and must be separated by a comma.
-- Example of a CORRECT Balance Sheet row with 11 columns: Total Assets,84000,90200,100.00,100.00,7.38,96774,103879,111541,119836,128829,138601
-- Example of a CORRECT Income Statement row: Net Sales,50000,52500,100.00,100.00,5.00,55125,57881,60775,63814,67005,70355
-- The Vertical Analysis %, Horizontal YoY %, and all 6 projection year columns are each separate comma-separated fields — never run them together.
-- Never mix tabs and commas in the same table.
-- Never use Excel formula syntax. Write all formulas as plain text, e.g. "DSO = (Trade Receivables / Net Sales) x 365". Never output #NAME? or lines starting with "=".
-- For metrics tables (DSO, DIO, DPO, CCC): Label,2023 value,2024 value — one row per metric, comma-separated throughout.`
+- Output ALL tables as plain comma-separated values (CSV). Do NOT wrap rows in double quotes. Every row must have exactly the same number of comma-separated fields as the header row.
+- NEVER concatenate adjacent numeric values. Every number, percentage, and projected value is its own comma-separated field.
+- The two Vertical Analysis % columns, the Horizontal YoY % column, and all 6 projection year columns are each separate fields separated by commas.
+- CORRECT Balance Sheet row (12 fields): Account,2023,2024,Vertical 2023 %,Vertical 2024 %,Horizontal YoY %,2025,2026,2027,2028,2029,2030
+- CORRECT Total Assets row: Total Assets,84000,90200,100.00,100.00,7.38,96774,103879,111541,119836,128829,138601
+- CORRECT Net Sales row: Net Sales,50000,52500,100.00,100.00,5.00,55125,57881,60775,63814,67005,70355
+- Use "Account" as the first column header in every table. Never use a section name (e.g. "Balance Sheet") as a column header.
+- Do NOT include "Header explanation:", "Column order:", "Header:" or similar descriptor lines. The table header row itself is sufficient.
+- For metrics tables (DSO, DIO, DPO, CCC): output only the final calculated numeric value in each cell, not the formula. CORRECT: DSO = (Trade Receivables / Net Sales) x 365,52.56,51.60. WRONG: DSO,...,(7200/50000)*365=52.56,...
+- Never use Excel formula syntax. Never output #NAME? or lines starting with "=".
+- Separate each section with a markdown heading (### Balance Sheet, ### Income Statement, etc.) on its own line.`
 
     const messageContent = fileText
       ? `${formatInstructions}\n\nFile: ${fileName}\n\n${fileText}\n\nUser question: ${userMessage}`

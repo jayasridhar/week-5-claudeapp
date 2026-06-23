@@ -60,6 +60,11 @@ const ITALIC_LINE_RE = /^\*([^*\n]+)\*$/
 // are pure formatting noise once content is grouped into blocks/tables.
 const HR_RE = /^(-{3,}|\*{3,})$/
 const FENCE_RE = /^```/
+// Excel formula error placeholder the Azure agent emits instead of formula text.
+const NAME_ERROR_RE = /^#NAME\?/i
+// Boilerplate the agent adds to describe table structure — redundant once
+// the table itself renders.
+const BOILERPLATE_RE = /^(header explanation|column order\s*[-–]|header:|label,\s*\d{4})/i
 
 // Dollar amounts like "5,000" use a comma as a thousands separator, which
 // collides with comma-delimited table detection: "2024,Equity Capital,5,000"
@@ -67,7 +72,10 @@ const FENCE_RE = /^```/
 // 20,500" gets mistaken for a 2-row CSV table. Collapse thousands-grouped
 // digits ("5,000", "1,234,567") back into one token before any parsing.
 function stripThousandsSeparators(content: string): string {
-  return content.replace(/\d+(?:,\d{3})+(?!\d)/g, m => m.replace(/,/g, ''))
+  // Leading group must be 1–3 digits so "91750,100" (5-digit CSV value followed
+  // by a 3-digit field) is never mistaken for a thousands-separated number.
+  // Negative lookbehind on [digit/.] excludes decimal suffixes like ".00,100".
+  return content.replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?!\d)/g, m => m.replace(/,/g, ''))
 }
 
 // Walks the whole response line by line and groups it into ordered text/table
@@ -95,24 +103,28 @@ function parseBlocks(rawContent: string): ContentBlock[] {
       continue
     }
 
-    if (HR_RE.test(trimmed) || FENCE_RE.test(trimmed)) {
+    if (HR_RE.test(trimmed) || FENCE_RE.test(trimmed) || NAME_ERROR_RE.test(trimmed) || BOILERPLATE_RE.test(trimmed)) {
       i++
       continue
     }
 
-    const mdHeading = trimmed.match(MD_HEADING_RE)
-    const boldHeading = trimmed.match(BOLD_LINE_RE)
-    const italicHeading = trimmed.match(ITALIC_LINE_RE)
-    if (HEADING_RE.test(trimmed) || mdHeading || boldHeading || italicHeading) {
+    // Strip outer quotes the agent uses to escape comma-containing rows
+    // ("Total Assets,84500,...") so delimiter detection can parse them properly.
+    const unquoted = trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed
+
+    const mdHeading = unquoted.match(MD_HEADING_RE)
+    const boldHeading = unquoted.match(BOLD_LINE_RE)
+    const italicHeading = unquoted.match(ITALIC_LINE_RE)
+    if (HEADING_RE.test(unquoted) || mdHeading || boldHeading || italicHeading) {
       flushText()
-      blocks.push({ type: 'heading', text: mdHeading?.[1] ?? boldHeading?.[1] ?? italicHeading?.[1] ?? trimmed })
+      blocks.push({ type: 'heading', text: mdHeading?.[1] ?? boldHeading?.[1] ?? italicHeading?.[1] ?? unquoted })
       i++
       continue
     }
 
-    const delim = detectDelimiter(line)
+    const delim = detectDelimiter(unquoted)
     if (delim) {
-      const fields = splitFields(line, delim)
+      const fields = splitFields(unquoted, delim)
       if (fields.length >= 2) {
         const rows: string[][] = [fields]
         let j = i + 1
@@ -120,9 +132,12 @@ function parseBlocks(rawContent: string): ContentBlock[] {
           const next = lines[j]
           if (!next.trim()) break
           if (isSeparatorLine(next)) { j++; continue }
-          const nextDelim = detectDelimiter(next)
+          const nextTrimmed = next.trim()
+          if (NAME_ERROR_RE.test(nextTrimmed) || BOILERPLATE_RE.test(nextTrimmed)) { j++; continue }
+          const nextUnquoted = nextTrimmed.startsWith('"') && nextTrimmed.endsWith('"') ? nextTrimmed.slice(1, -1) : nextTrimmed
+          const nextDelim = detectDelimiter(nextUnquoted)
           if (nextDelim !== delim) break
-          const nextFields = splitFields(next, delim)
+          const nextFields = splitFields(nextUnquoted, nextDelim)
           if (nextFields.length !== fields.length) break
           rows.push(nextFields)
           j++
@@ -136,7 +151,7 @@ function parseBlocks(rawContent: string): ContentBlock[] {
       }
     }
 
-    textBuffer.push(line)
+    textBuffer.push(unquoted)
     i++
   }
   flushText()
