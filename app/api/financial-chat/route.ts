@@ -21,10 +21,14 @@ export async function POST(req: NextRequest) {
     const token = await getToken()
 
     const formatInstructions = `FORMATTING RULES (follow exactly):
-- All tables must use comma-separated values consistently. Never mix tabs and commas in the same table.
-- Every table row must have the same number of comma-separated fields as the header row. Never concatenate values directly onto a label with no separator.
-- Never use Excel formula syntax. Write all formulas as plain text, e.g. "DSO = (Trade Receivables / Net Sales) × 365". Never start a line with "=". Never output #NAME? or other spreadsheet error strings.
-- For metrics tables (DSO, DIO, DPO, CCC), always use this format: Label,2023 value,2024 value — one row per metric, comma-separated, same delimiter throughout.`
+- Output ALL tables as plain comma-separated values (CSV). Every row must have exactly the same number of comma-separated fields as the header row. Count the commas — if the header has 11 commas, every data row must also have exactly 11 commas.
+- NEVER concatenate adjacent numeric values without a comma between them. Each number, percentage, or projected value is a separate field and must be separated by a comma.
+- Example of a CORRECT Balance Sheet row with 11 columns: Total Assets,84000,90200,100.00,100.00,7.38,96774,103879,111541,119836,128829,138601
+- Example of a CORRECT Income Statement row: Net Sales,50000,52500,100.00,100.00,5.00,55125,57881,60775,63814,67005,70355
+- The Vertical Analysis %, Horizontal YoY %, and all 6 projection year columns are each separate comma-separated fields — never run them together.
+- Never mix tabs and commas in the same table.
+- Never use Excel formula syntax. Write all formulas as plain text, e.g. "DSO = (Trade Receivables / Net Sales) x 365". Never output #NAME? or lines starting with "=".
+- For metrics tables (DSO, DIO, DPO, CCC): Label,2023 value,2024 value — one row per metric, comma-separated throughout.`
 
     const messageContent = fileText
       ? `${formatInstructions}\n\nFile: ${fileName}\n\n${fileText}\n\nUser question: ${userMessage}`
