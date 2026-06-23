@@ -20,9 +20,15 @@ export async function POST(req: NextRequest) {
   try {
     const token = await getToken()
 
+    const formatInstructions = `FORMATTING RULES (follow exactly):
+- All tables must use comma-separated values consistently. Never mix tabs and commas in the same table.
+- Every table row must have the same number of comma-separated fields as the header row. Never concatenate values directly onto a label with no separator.
+- Never use Excel formula syntax. Write all formulas as plain text, e.g. "DSO = (Trade Receivables / Net Sales) × 365". Never start a line with "=". Never output #NAME? or other spreadsheet error strings.
+- For metrics tables (DSO, DIO, DPO, CCC), always use this format: Label,2023 value,2024 value — one row per metric, comma-separated, same delimiter throughout.`
+
     const messageContent = fileText
-      ? `File: ${fileName}\n\n${fileText}\n\nUser question: ${userMessage}`
-      : userMessage
+      ? `${formatInstructions}\n\nFile: ${fileName}\n\n${fileText}\n\nUser question: ${userMessage}`
+      : `${formatInstructions}\n\n${userMessage}`
 
     const response = await fetch(`${AGENT_ENDPOINT}/openai/v1/responses`, {
       method: 'POST',
