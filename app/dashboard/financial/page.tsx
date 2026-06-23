@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, X, Send, Download, FileText, Eye, EyeOff } from 'lucide-react'
+import { Upload, X, Send, Download, FileText, Eye, EyeOff, CreditCard } from 'lucide-react'
 
 type Message = {
   role: 'user' | 'assistant'
@@ -486,6 +486,11 @@ export default function FinancialPage() {
     }
   }
 
+  function handleGoToCredit(msg: Message) {
+    localStorage.setItem('financial_output', msg.content)
+    router.push('/dashboard/credit')
+  }
+
   async function handleSendToCredit(msg: Message) {
     patchCreditState(msg.id, { sending: true, error: undefined })
     try {
@@ -590,25 +595,16 @@ export default function FinancialPage() {
                         />
                       )}
 
-                      {creditState[msg.id]?.pdfUrl && (
-                        <button
-                          onClick={() => handleSendToCredit(msg)}
-                          disabled={creditState[msg.id]?.sending}
-                          className="self-start flex items-center gap-1.5 h-7 px-3 rounded bg-an-accent hover:bg-an-accent-hover disabled:opacity-50 text-white text-label transition-colors"
-                        >
-                          {creditState[msg.id]?.sending ? 'Sending…' : 'Send to Credit Readiness Agent'}
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleGoToCredit(msg)}
+                        className="self-start flex items-center gap-1.5 h-7 px-3 rounded bg-an-accent hover:bg-an-accent-hover text-white text-label transition-colors"
+                      >
+                        <CreditCard size={12} strokeWidth={1.5} />
+                        Run credit readiness
+                      </button>
 
                       {creditState[msg.id]?.error && (
                         <p className="text-caption text-an-error">{creditState[msg.id]?.error}</p>
-                      )}
-
-                      {creditState[msg.id]?.summary && (
-                        <div className="mt-2 p-4 rounded-lg border border-an-border" style={{ background: 'var(--an-bg-surface)' }}>
-                          <p className="text-label text-an-accent mb-3 uppercase tracking-wide">Credit Readiness Summary</p>
-                          <ResponseContent content={creditState[msg.id]!.summary!} />
-                        </div>
                       )}
                     </div>
                   </>
