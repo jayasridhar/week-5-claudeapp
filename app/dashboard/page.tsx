@@ -34,7 +34,7 @@ export default function DashboardPage() {
     <div className="flex-1 overflow-y-auto p-8">
       <div className="max-w-3xl mx-auto">
         <div className="mb-10">
-          <h1 className="text-display text-an-fg-base mb-2">Welcome to Paarizaat Portal</h1>
+          <h1 className="text-display text-an-fg-base mb-2">Welcome to Birchmont Capital Fusion</h1>
           <p className="text-body text-an-fg-subtle">Select a tool to get started.</p>
         </div>
 

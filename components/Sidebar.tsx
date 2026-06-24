@@ -30,7 +30,7 @@ export default function Sidebar() {
     <aside className="w-64 flex-shrink-0 bg-an-bg-subtle border-r border-an-border flex flex-col h-full">
       {/* Logo area */}
       <div className="p-4 pb-3 flex-shrink-0 border-b border-an-border">
-        <span className="font-display text-[15px] font-semibold text-an-fg-base">Paarizaat Portal</span>
+        <span className="font-display text-[15px] font-semibold text-an-fg-base">Birchmont Capital Fusion</span>
       </div>
 
       {/* Nav links */}
