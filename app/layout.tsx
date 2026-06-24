@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'DocAssist — AI Document Analysis',
-  description: 'Upload any document and get instant AI-powered analysis and answers.',
+  title: 'Birchmont Capital Fusion',
+  description: 'AI-powered financial analysis and credit readiness for capital decisions.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

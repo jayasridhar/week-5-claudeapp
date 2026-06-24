@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { FileText, MessageSquare, History, Shield } from 'lucide-react'
+import { BarChart2, CreditCard, Shield } from 'lucide-react'
 
 export default function LandingPage() {
   const router = useRouter()
@@ -19,7 +19,7 @@ export default function LandingPage() {
       <nav className="border-b border-an-border sticky top-0 bg-an-bg-base/90 backdrop-blur-sm z-50">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <span className="font-display text-[17px] font-semibold text-an-fg-base">
-            DocAssist
+            Birchmont Capital Fusion
           </span>
           <div className="flex items-center gap-3">
             <Link
@@ -44,17 +44,17 @@ export default function LandingPage() {
           Powered by Azure AI
         </div>
         <h1 className="font-display text-[52px] font-semibold leading-[1.15] text-an-fg-base mb-6 max-w-3xl mx-auto">
-          Analyse any document in minutes
+          Financial intelligence for capital decisions
         </h1>
         <p className="text-[17px] text-an-fg-subtle leading-relaxed max-w-xl mx-auto mb-10">
-          Upload a PDF or Word document and ask anything about it. Get accurate, cited answers from an AI that only uses what's in your document.
+          Upload a financial statement and get a full normalized analysis — balance sheet, income statement, cash flow, and credit readiness — in minutes.
         </p>
         <div className="flex items-center justify-center gap-4">
           <Link
             href="/signup"
             className="bg-an-accent hover:bg-an-accent-hover text-white font-medium text-[15px] px-6 py-2.5 rounded transition-colors duration-150"
           >
-            Start for free
+            Get started
           </Link>
           <Link
             href="/login"
@@ -68,32 +68,27 @@ export default function LandingPage() {
       {/* Features */}
       <section className="max-w-6xl mx-auto px-6 py-16">
         <h2 className="text-title text-center text-an-fg-base mb-2">
-          Everything you need to understand your documents
+          Two tools. One platform.
         </h2>
         <p className="text-body text-an-fg-subtle text-center mb-12">
-          Purpose-built for knowledge workers who review contracts, reports, and research.
+          Purpose-built for analysts and advisors who need fast, accurate financial assessments.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
             {
-              icon: FileText,
-              title: 'Upload PDF or DOCX',
-              description: 'Drop in any text-based PDF or Word document up to 10 MB. Your file is parsed client-side and never stored on our servers.',
+              icon: BarChart2,
+              title: 'Financial Analysis',
+              description: 'Upload a PDF financial statement and receive a normalized breakdown including balance sheet, income statement, cash flow, vertical and horizontal analysis, and 5-year projections.',
             },
             {
-              icon: MessageSquare,
-              title: 'Ask anything',
-              description: 'Ask questions in plain English. The AI answers strictly from your document — with source references — and flags when information is not present.',
-            },
-            {
-              icon: History,
-              title: 'Full session history',
-              description: 'Every conversation is saved. Return to any session, continue where you left off, and review past Q&A at any time.',
+              icon: CreditCard,
+              title: 'Credit Readiness',
+              description: 'Assess credit readiness based on normalized financial data. Run directly after a financial analysis or paste your own data to get a full credit assessment.',
             },
             {
               icon: Shield,
               title: 'Secure and grounded',
-              description: 'Responses are grounded only in your document. The AI will not speculate or hallucinate content that is not there.',
+              description: 'Responses are grounded in your financial data. The AI will not speculate or generate figures that are not supported by the uploaded document.',
             },
           ].map(({ icon: Icon, title, description }) => (
             <div
@@ -110,106 +105,26 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing */}
-      <section className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-title text-center text-an-fg-base mb-2">Simple pricing</h2>
-        <p className="text-body text-an-fg-subtle text-center mb-12">
-          Start free. Upgrade when you need more.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[
-            {
-              name: 'Free trial',
-              price: '$0',
-              period: '14 days',
-              features: ['5 document analyses', '1 user', 'Full chat history'],
-              accent: false,
-            },
-            {
-              name: 'Starter',
-              price: '$29',
-              period: 'per month',
-              features: ['20 analyses', '1 user', 'Full chat history', 'Email support'],
-              accent: false,
-            },
-            {
-              name: 'Growth',
-              price: '$79',
-              period: 'per month',
-              features: ['100 analyses', '5 users', 'Priority support', 'Session export'],
-              accent: true,
-            },
-            {
-              name: 'Pro',
-              price: '$199',
-              period: 'per month',
-              features: ['Unlimited analyses', '20 users', 'Priority support', 'Advanced analytics'],
-              accent: false,
-            },
-          ].map(({ name, price, period, features, accent }) => (
-            <div
-              key={name}
-              className={`border rounded-lg p-6 flex flex-col ${
-                accent
-                  ? 'border-an-accent bg-an-accent-subtle'
-                  : 'border-an-border bg-an-bg-subtle'
-              }`}
-            >
-              {accent && (
-                <span className="text-label text-an-accent uppercase tracking-wide mb-3">
-                  Most popular
-                </span>
-              )}
-              <div className="mb-4">
-                <div className="text-[28px] font-semibold text-an-fg-base font-display">
-                  {price}
-                </div>
-                <div className="text-caption text-an-fg-muted">{period}</div>
-              </div>
-              <div className="text-[15px] font-medium text-an-fg-base mb-4">{name}</div>
-              <ul className="space-y-2 flex-1 mb-6">
-                {features.map((f) => (
-                  <li key={f} className="text-body text-an-fg-subtle flex items-center gap-2">
-                    <span className="w-1 h-1 rounded-full bg-an-accent flex-shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href="/signup"
-                className={`text-center text-label py-2 rounded transition-colors duration-150 ${
-                  accent
-                    ? 'bg-an-accent hover:bg-an-accent-hover text-white'
-                    : 'bg-an-bg-surface hover:bg-an-bg-elevated text-an-fg-base border border-an-border'
-                }`}
-              >
-                Get started
-              </Link>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* Bottom CTA */}
       <section className="max-w-6xl mx-auto px-6 py-16 text-center">
         <h2 className="font-display text-[32px] font-semibold text-an-fg-base mb-4">
-          Ready to analyse your first document?
+          Ready to run your first analysis?
         </h2>
         <p className="text-body text-an-fg-subtle mb-8">
-          No credit card required. Start with 5 free analyses.
+          Sign up and start analysing financial statements immediately.
         </p>
         <Link
           href="/signup"
           className="inline-block bg-an-accent hover:bg-an-accent-hover text-white font-medium text-[15px] px-8 py-3 rounded transition-colors duration-150"
         >
-          Create a free account
+          Create an account
         </Link>
       </section>
 
       {/* Footer */}
       <footer className="border-t border-an-border">
         <div className="max-w-6xl mx-auto px-6 py-8 flex items-center justify-between">
-          <span className="font-display text-[15px] font-medium text-an-fg-base">DocAssist</span>
+          <span className="font-display text-[15px] font-medium text-an-fg-base">Birchmont Capital Fusion</span>
           <p className="text-caption text-an-fg-muted">
             AI-generated analysis only. Always consult a qualified professional before acting on findings.
           </p>

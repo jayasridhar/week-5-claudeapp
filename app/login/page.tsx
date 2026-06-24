@@ -41,7 +41,7 @@ export default function LoginPage() {
     <div data-theme="light" className="min-h-screen bg-an-bg-base flex items-center justify-center p-4">
       <div className="w-full max-w-[400px]">
         <div className="text-center mb-8">
-          <span className="font-display text-[22px] font-semibold text-an-fg-base">DocAssist</span>
+          <span className="font-display text-[22px] font-semibold text-an-fg-base">Birchmont Capital Fusion</span>
           <h1 className="text-title text-an-fg-base mt-4 mb-1">Welcome back</h1>
           <p className="text-body text-an-fg-subtle">Log in to your account</p>
         </div>
