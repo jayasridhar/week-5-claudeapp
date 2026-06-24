@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Download, FileText, BarChart2, CreditCard } from 'lucide-react'
+import { Send, Download, BarChart2, CreditCard, Upload, X } from 'lucide-react'
 import Link from 'next/link'
 
 type Message = {
@@ -160,11 +160,15 @@ export default function CreditPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [normalizedText, setNormalizedText] = useState('')
   const [hasStoredData, setHasStoredData] = useState(false)
+  const [fileName, setFileName] = useState('')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState('')
   const [autoRan, setAutoRan] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const userId = localStorage.getItem('userId')
@@ -177,7 +181,6 @@ export default function CreditPage() {
     }
   }, [router])
 
-  // Auto-run once when stored financial data is available
   useEffect(() => {
     if (hasStoredData && normalizedText && !autoRan && messages.length === 0) {
       setAutoRan(true)
@@ -188,6 +191,60 @@ export default function CreditPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
+
+  async function handleFile(f: File) {
+    setFileLoading(true)
+    setFileError('')
+    try {
+      const name = f.name
+      const lower = name.toLowerCase()
+      let text = ''
+
+      if (lower.endsWith('.pdf')) {
+        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist')
+        GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        const buf = await f.arrayBuffer()
+        const pdf = await getDocument({ data: buf }).promise
+        const pages = await Promise.all(
+          Array.from({ length: pdf.numPages }, (_, idx) =>
+            pdf.getPage(idx + 1).then(p => p.getTextContent()).then(tc =>
+              tc.items.map((it: any) => it.str).join(' ')
+            )
+          )
+        )
+        text = pages.join('\n')
+      } else if (lower.endsWith('.docx')) {
+        const mammoth = await import('mammoth')
+        const buf = await f.arrayBuffer()
+        const result = await mammoth.extractRawText({ arrayBuffer: buf })
+        text = result.value
+      } else if (lower.endsWith('.csv') || lower.endsWith('.txt')) {
+        text = await f.text()
+      } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        const XLSX = await import('xlsx')
+        const buf = await f.arrayBuffer()
+        const wb = XLSX.read(buf, { type: 'array' })
+        text = wb.SheetNames.map(sname => {
+          const ws = wb.Sheets[sname]
+          return `Sheet: ${sname}\n${XLSX.utils.sheet_to_csv(ws)}`
+        }).join('\n\n')
+      } else {
+        setFileError('Unsupported file type. Use PDF, DOCX, CSV, Excel, or TXT.')
+        return
+      }
+
+      setFileName(name)
+      setNormalizedText(text)
+      setHasStoredData(true)
+      setAutoRan(true)
+      setMessages([])
+      runAssessment(text, undefined)
+    } catch {
+      setFileError('Failed to read file. Please try again.')
+    } finally {
+      setFileLoading(false)
+    }
+  }
 
   async function runAssessment(text: string, userMessage: string | undefined) {
     const userMsg = userMessage ?? 'Provide a full credit readiness assessment.'
@@ -215,8 +272,7 @@ export default function CreditPage() {
 
   async function handleSend() {
     const text = input.trim()
-    if (!text || loading) return
-    if (!normalizedText) return
+    if (!text || loading || !normalizedText) return
     setInput('')
     await runAssessment(normalizedText, text)
   }
@@ -225,15 +281,15 @@ export default function CreditPage() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
-  function handleManualSubmit() {
-    if (!normalizedText.trim()) return
-    setHasStoredData(true)
-    setAutoRan(true)
+  function handleClearFile() {
+    setFileName('')
+    setNormalizedText('')
+    setHasStoredData(false)
+    setAutoRan(false)
     setMessages([])
-    runAssessment(normalizedText, undefined)
+    setFileError('')
+    localStorage.removeItem('financial_output')
   }
-
-  const assistantMessages = messages.filter(m => m.role === 'assistant')
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -252,34 +308,45 @@ export default function CreditPage() {
         </Link>
       </div>
 
-      {/* If no data yet — show paste area */}
+      {/* Upload state */}
       {!hasStoredData && (
         <div className="flex-1 flex flex-col items-center justify-center p-8">
-          <div className="w-full max-w-xl">
-            <div className="text-center mb-6">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
               <CreditCard size={32} strokeWidth={1} className="text-an-fg-muted mx-auto mb-3" />
-              <h2 className="text-title text-an-fg-base mb-2">No financial data loaded</h2>
+              <h2 className="text-title text-an-fg-base mb-2">Upload financial data</h2>
               <p className="text-body-sm text-an-fg-subtle">
-                Run a{' '}
+                Upload a financial statement, or run{' '}
                 <Link href="/dashboard/financial" className="text-an-accent hover:underline">
                   Financial Analysis
                 </Link>{' '}
-                first, or paste normalized financial data below.
+                first to auto-populate.
               </p>
             </div>
-            <textarea
-              value={normalizedText}
-              onChange={e => setNormalizedText(e.target.value)}
-              placeholder="Paste normalized financial data here…"
-              className="w-full h-48 p-3 bg-an-bg-surface border border-an-border rounded-lg text-body-sm text-an-fg-base placeholder:text-an-fg-muted focus:outline-none focus:border-an-border-strong resize-none font-mono"
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.csv,.xlsx,.xls,.txt"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }}
             />
+
             <button
-              onClick={handleManualSubmit}
-              disabled={!normalizedText.trim()}
-              className="mt-3 h-9 px-4 bg-an-accent hover:bg-an-accent-hover disabled:opacity-50 text-white text-label rounded transition-colors"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={fileLoading}
+              className="w-full h-32 rounded-xl border-2 border-dashed border-an-border hover:border-an-border-strong hover:bg-an-bg-surface transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50"
             >
-              Run credit assessment
+              <Upload size={20} strokeWidth={1.5} className="text-an-fg-muted" />
+              <span className="text-body-sm text-an-fg-subtle">
+                {fileLoading ? 'Reading file…' : 'Click to upload'}
+              </span>
+              <span className="text-caption text-an-fg-muted">PDF, DOCX, CSV, Excel, TXT</span>
             </button>
+
+            {fileError && (
+              <p className="mt-3 text-caption text-an-error text-center">{fileError}</p>
+            )}
           </div>
         </div>
       )}
@@ -289,6 +356,19 @@ export default function CreditPage() {
         <>
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-[720px] mx-auto flex flex-col gap-6">
+
+              {/* File chip */}
+              {fileName && (
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1.5 h-7 px-2.5 bg-an-bg-surface border border-an-border rounded-full text-body-sm text-an-fg-subtle">
+                    {fileName}
+                    <button onClick={handleClearFile} className="text-an-fg-muted hover:text-an-fg-base transition-colors">
+                      <X size={12} strokeWidth={2} />
+                    </button>
+                  </span>
+                </div>
+              )}
+
               {messages.map(msg => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
