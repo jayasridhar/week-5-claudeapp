@@ -39,8 +39,18 @@ function stripThousandsSeparators(content: string): string {
   return content.replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?!\d)/g, m => m.replace(/,/g, ''))
 }
 
+// Remove LaTeX display blocks \[...\] and inline \(...\), then clean up
+// leftover LaTeX commands like \text{}, \frac{}{}, \approx, etc.
+function stripLatex(content: string): string {
+  return content
+    .replace(/\\\[[\s\S]*?\\\]/g, '')          // display math blocks
+    .replace(/\\\([\s\S]*?\\\)/g, '')           // inline math
+    .replace(/\\(?:text|frac|approx|times|cdot|leq|geq|Rightarrow)\b/g, '') // common commands
+    .replace(/[{}]/g, '')                        // leftover braces
+}
+
 function parseBlocks(rawContent: string): ContentBlock[] {
-  const content = stripThousandsSeparators(rawContent)
+  const content = stripThousandsSeparators(stripLatex(rawContent))
   const lines = content.split('\n')
   const blocks: ContentBlock[] = []
   let textBuffer: string[] = []

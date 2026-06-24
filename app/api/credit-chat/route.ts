@@ -20,9 +20,17 @@ export async function POST(req: NextRequest) {
   try {
     const token = await getToken()
 
+    const formatInstructions = `FORMATTING RULES (follow exactly):
+- Do NOT use LaTeX notation. Never write \\[, \\], \\frac{}{}, \\text{}, or any LaTeX math syntax.
+- Show all formulas and calculations as plain inline text. CORRECT: FCCR = (EBIT + Interest) / (Interest + Principal) = 15225 / 4463 = 3.41. WRONG: \\[\\text{FCCR} = \\frac{...}\\]
+- Output metric comparison tables as plain CSV with headers. Example: Metric,Value,Benchmark,Assessment
+- Keep explanations concise. State the metric, the formula in plain text, the result, and the interpretation. Skip lengthy preambles about data availability or assumptions.
+- Use ### headings (e.g. ### Key Credit Metrics, ### Benchmarks, ### Credit Capacity) to separate sections.
+- Do not end with an offer to prepare further reports or ask how to proceed.`
+
     const messageContent = userMessage
-      ? `${userMessage}\n\nNormalized financial data:\n${normalizedText}`
-      : `Provide a credit readiness assessment based on the following normalized financial data:\n\n${normalizedText}`
+      ? `${formatInstructions}\n\n${userMessage}\n\nNormalized financial data:\n${normalizedText}`
+      : `${formatInstructions}\n\nProvide a credit readiness assessment based on the following normalized financial data:\n\n${normalizedText}`
 
     const response = await fetch(`${AGENT_ENDPOINT}/openai/v1/responses`, {
       method: 'POST',
