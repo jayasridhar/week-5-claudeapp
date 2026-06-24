@@ -1,4 +1,7 @@
 import { supabase } from './supabase'
+import { supabaseServer } from './supabase-server'
+
+const db = typeof window === 'undefined' ? supabaseServer : supabase
 
 export type UserRow = {
   id: string
@@ -49,7 +52,7 @@ export async function saveAnalysis(
   content: string,
   fileName?: string
 ): Promise<AnalysisRow> {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseServer
     .from('analyses')
     .insert({ user_id: userId, type, content, file_name: fileName ?? null })
     .select('*')
@@ -63,7 +66,7 @@ export async function getAnalyses(
   type: 'financial' | 'credit',
   limit = 20
 ): Promise<AnalysisRow[]> {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseServer
     .from('analyses')
     .select('*')
     .eq('user_id', userId)
@@ -75,12 +78,12 @@ export async function getAnalyses(
 }
 
 export async function deleteAnalysis(id: string): Promise<void> {
-  const { error } = await supabase.from('analyses').delete().eq('id', id)
+  const { error } = await supabaseServer.from('analyses').delete().eq('id', id)
   if (error) throw error
 }
 
 export async function clearAnalyses(userId: string, type: 'financial' | 'credit'): Promise<void> {
-  const { error } = await supabase.from('analyses').delete().eq('user_id', userId).eq('type', type)
+  const { error } = await supabaseServer.from('analyses').delete().eq('user_id', userId).eq('type', type)
   if (error) throw error
 }
 
@@ -96,7 +99,7 @@ export type DashboardStats = {
 }
 
 export async function getUser(email: string): Promise<UserRow | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('users')
     .select('*')
     .eq('email', email)
@@ -106,7 +109,7 @@ export async function getUser(email: string): Promise<UserRow | null> {
 }
 
 export async function createUser(email: string, passwordHash: string): Promise<string> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('users')
     .insert({ email, password_hash: passwordHash })
     .select('id')
@@ -116,7 +119,7 @@ export async function createUser(email: string, passwordHash: string): Promise<s
 }
 
 export async function createSession(userId: string, title = 'New session'): Promise<SessionRow> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('sessions')
     .insert({ user_id: userId, title })
     .select('*')
@@ -126,7 +129,7 @@ export async function createSession(userId: string, title = 'New session'): Prom
 }
 
 export async function getSessions(userId: string): Promise<SessionRow[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('sessions')
     .select('*')
     .eq('user_id', userId)
@@ -137,7 +140,7 @@ export async function getSessions(userId: string): Promise<SessionRow[]> {
 }
 
 export async function getSession(sessionId: string): Promise<SessionRow | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('sessions')
     .select('*')
     .eq('id', sessionId)
@@ -150,12 +153,12 @@ export async function updateSession(
   id: string,
   fields: Partial<Pick<SessionRow, 'title' | 'status' | 'pinned'>>
 ): Promise<void> {
-  const { error } = await supabase.from('sessions').update(fields).eq('id', id)
+  const { error } = await db.from('sessions').update(fields).eq('id', id)
   if (error) throw error
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  const { error } = await supabase.from('sessions').delete().eq('id', id)
+  const { error } = await db.from('sessions').delete().eq('id', id)
   if (error) throw error
 }
 
@@ -164,7 +167,7 @@ export async function createMessage(
   role: 'user' | 'assistant',
   content: string
 ): Promise<MessageRow> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('messages')
     .insert({ session_id: sessionId, role, content })
     .select('*')
@@ -178,7 +181,7 @@ export async function getMessages(
   limit = 100,
   before?: string
 ): Promise<MessageRow[]> {
-  let query = supabase
+  let query = db
     .from('messages')
     .select('*')
     .eq('session_id', sessionId)
@@ -196,7 +199,7 @@ export async function createFeedback(
   rating: number,
   comment?: string
 ): Promise<string> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('feedback')
     .insert({ user_id: userId, session_id: sessionId, rating, comment: comment ?? null })
     .select('id')
@@ -219,14 +222,14 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
     { count: pinnedCount },
     { count: failedJobs },
   ] = await Promise.all([
-    supabase.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId),
-    supabase.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', todayIso),
-    supabase.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('updated_at', weekAgo),
-    supabase.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('pinned', true),
-    supabase.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'error'),
+    db.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+    db.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', todayIso),
+    db.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('updated_at', weekAgo),
+    db.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('pinned', true),
+    db.from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'error'),
   ])
 
-  const { data: sessionIds } = await supabase
+  const { data: sessionIds } = await db
     .from('sessions')
     .select('id')
     .eq('user_id', userId)
@@ -239,9 +242,9 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
 
   if (ids.length > 0) {
     const [{ count: totalMsgs }, { count: weekMsgs }, { data: feedbackData }] = await Promise.all([
-      supabase.from('messages').select('*', { count: 'exact', head: true }).in('session_id', ids).eq('role', 'user'),
-      supabase.from('messages').select('*', { count: 'exact', head: true }).in('session_id', ids).eq('role', 'user').gte('created_at', weekAgo),
-      supabase.from('feedback').select('rating').in('session_id', ids),
+      db.from('messages').select('*', { count: 'exact', head: true }).in('session_id', ids).eq('role', 'user'),
+      db.from('messages').select('*', { count: 'exact', head: true }).in('session_id', ids).eq('role', 'user').gte('created_at', weekAgo),
+      db.from('feedback').select('rating').in('session_id', ids),
     ])
     totalUserMessages = totalMsgs ?? 0
     weekUserMessages = weekMsgs ?? 0
