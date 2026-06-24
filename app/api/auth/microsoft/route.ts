@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { ConfidentialClientApplication } from '@azure/msal-node'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const msalConfig = {
     auth: {
