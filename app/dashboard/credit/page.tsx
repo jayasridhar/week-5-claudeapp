@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Download, BarChart2, CreditCard, Upload, X } from 'lucide-react'
+import { Send, Download, BarChart2, CreditCard, Upload, X, FileText } from 'lucide-react'
 import Link from 'next/link'
 
 type Message = {
@@ -176,6 +176,7 @@ export default function CreditPage() {
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState('')
   const [autoRan, setAutoRan] = useState(false)
+  const [pdfState, setPdfState] = useState<Record<string, { url?: string; generating?: boolean }>>({})
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -291,6 +292,85 @@ export default function CreditPage() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
+  async function handleGeneratePdf(msg: Message) {
+    setPdfState(prev => ({ ...prev, [msg.id]: { ...prev[msg.id], generating: true } }))
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+      const margin = 40
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const maxWidth = pageWidth - margin * 2
+      let y = margin
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.text('Credit Readiness Assessment', margin, y)
+      y += 24
+
+      const blocks = parseBlocks(msg.content)
+      for (const block of blocks) {
+        if (block.type === 'heading') {
+          if (y > pageHeight - margin - 20) { doc.addPage(); y = margin }
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(11)
+          y += 8
+          doc.text(block.text, margin, y)
+          y += 16
+        } else if (block.type === 'table') {
+          const rows = block.rows!
+          const colCount = rows[0].length
+          const colWidth = Math.min(maxWidth / colCount, 140)
+          for (let r = 0; r < rows.length; r++) {
+            if (y > pageHeight - margin - 14) { doc.addPage(); y = margin }
+            if (r === 0) {
+              doc.setFont('helvetica', 'bold')
+              doc.setFontSize(8)
+              doc.setFillColor(50, 50, 50)
+              doc.rect(margin, y - 10, maxWidth, 14, 'F')
+              doc.setTextColor(255, 255, 255)
+            } else {
+              doc.setFont('helvetica', 'normal')
+              doc.setFontSize(8)
+              doc.setTextColor(0, 0, 0)
+              if (r % 2 === 0) {
+                doc.setFillColor(245, 245, 243)
+                doc.rect(margin, y - 10, maxWidth, 14, 'F')
+              }
+            }
+            rows[r].forEach((cell, ci) => {
+              const x = margin + ci * colWidth
+              const clipped = doc.splitTextToSize(cell, colWidth - 4)[0] ?? ''
+              doc.text(clipped, x + 2, y)
+            })
+            y += 14
+          }
+          doc.setTextColor(0, 0, 0)
+          y += 6
+        } else {
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(9)
+          doc.setTextColor(0, 0, 0)
+          for (const line of block.text.split('\n')) {
+            const wrapped = doc.splitTextToSize(line || ' ', maxWidth)
+            for (const wl of wrapped) {
+              if (y > pageHeight - margin) { doc.addPage(); y = margin }
+              doc.text(wl, margin, y)
+              y += 13
+            }
+          }
+          y += 4
+        }
+      }
+
+      const blob = doc.output('blob')
+      const url = URL.createObjectURL(blob)
+      setPdfState(prev => ({ ...prev, [msg.id]: { url, generating: false } }))
+    } catch {
+      setPdfState(prev => ({ ...prev, [msg.id]: { generating: false } }))
+    }
+  }
+
   function handleClearFile() {
     setFileName('')
     setNormalizedText('')
@@ -391,7 +471,7 @@ export default function CreditPage() {
                     {msg.role === 'assistant' ? (
                       <div className="flex flex-col gap-3">
                         <ResponseContent content={msg.content} />
-                        <div className="flex items-center gap-2 pt-1">
+                        <div className="flex items-center gap-3 pt-1 flex-wrap">
                           <a
                             href={URL.createObjectURL(new Blob([buildCombinedCSV(parseBlocks(msg.content))], { type: 'text/csv' }))}
                             download="credit_readiness.csv"
@@ -400,6 +480,25 @@ export default function CreditPage() {
                             <Download size={12} strokeWidth={1.5} />
                             Download CSV
                           </a>
+                          {pdfState[msg.id]?.url ? (
+                            <a
+                              href={pdfState[msg.id]!.url}
+                              download="credit_readiness.pdf"
+                              className="flex items-center gap-1.5 text-caption text-an-accent hover:underline"
+                            >
+                              <Download size={12} strokeWidth={1.5} />
+                              Download PDF
+                            </a>
+                          ) : (
+                            <button
+                              onClick={() => handleGeneratePdf(msg)}
+                              disabled={pdfState[msg.id]?.generating}
+                              className="flex items-center gap-1.5 text-caption text-an-fg-subtle hover:text-an-fg-base transition-colors disabled:opacity-50"
+                            >
+                              <FileText size={12} strokeWidth={1.5} />
+                              {pdfState[msg.id]?.generating ? 'Generating PDF…' : 'Generate PDF'}
+                            </button>
+                          )}
                         </div>
                       </div>
                     ) : (
