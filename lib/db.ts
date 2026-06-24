@@ -34,6 +34,46 @@ export type FeedbackRow = {
   created_at: string
 }
 
+export type AnalysisRow = {
+  id: string
+  user_id: string
+  type: 'financial' | 'credit'
+  file_name: string | null
+  content: string
+  created_at: string
+}
+
+export async function saveAnalysis(
+  userId: string,
+  type: 'financial' | 'credit',
+  content: string,
+  fileName?: string
+): Promise<AnalysisRow> {
+  const { data, error } = await supabase
+    .from('analyses')
+    .insert({ user_id: userId, type, content, file_name: fileName ?? null })
+    .select('*')
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function getAnalyses(
+  userId: string,
+  type: 'financial' | 'credit',
+  limit = 20
+): Promise<AnalysisRow[]> {
+  const { data, error } = await supabase
+    .from('analyses')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('type', type)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data ?? []
+}
+
 export type DashboardStats = {
   totalSessions: number
   todaySessions: number

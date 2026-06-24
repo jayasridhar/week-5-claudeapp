@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, X, Send, Download, FileText, Eye, EyeOff, CreditCard } from 'lucide-react'
+import { Upload, X, Send, Download, FileText, Eye, EyeOff, CreditCard, History } from 'lucide-react'
 
 type Message = {
   role: 'user' | 'assistant'
@@ -319,6 +319,8 @@ function ResponseContent({ content }: { content: string }) {
   )
 }
 
+type HistoryEntry = { id: string; file_name: string | null; created_at: string; content: string }
+
 export default function FinancialPage() {
   const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([])
@@ -328,13 +330,19 @@ export default function FinancialPage() {
   const [file, setFile] = useState<{ name: string; text: string } | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [creditState, setCreditState] = useState<Record<string, CreditState>>({})
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [showHistory, setShowHistory] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const userId = localStorage.getItem('userId')
-    if (!userId) router.replace('/login')
+    if (!userId) { router.replace('/login'); return }
+    fetch(`/api/analyses?userId=${userId}&type=financial`)
+      .then(r => r.json())
+      .then((data: HistoryEntry[]) => Array.isArray(data) && setHistory(data))
+      .catch(() => {})
   }, [router])
 
   useEffect(() => {
@@ -427,7 +435,20 @@ export default function FinancialPage() {
         setError(data.error ?? 'Request failed.')
         return
       }
-      setMessages(prev => [...prev, { role: 'assistant', content: data.content, id: crypto.randomUUID() }])
+      const assistantId = crypto.randomUUID()
+      setMessages(prev => [...prev, { role: 'assistant', content: data.content, id: assistantId }])
+
+      const userId = localStorage.getItem('userId')
+      if (userId) {
+        fetch('/api/analyses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, type: 'financial', content: data.content, fileName: activeFile?.name }),
+        })
+          .then(r => r.json())
+          .then((saved: HistoryEntry) => saved?.id && setHistory(prev => [saved, ...prev]))
+          .catch(() => {})
+      }
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -516,7 +537,41 @@ export default function FinancialPage() {
       <div className="flex-shrink-0 h-12 border-b border-an-border flex items-center px-6 gap-3">
         <h2 className="text-body font-medium text-an-fg-base">Financial Normalization</h2>
         <span className="text-label px-2 py-0.5 rounded-full bg-an-accent-subtle text-an-accent">Beta</span>
+        {history.length > 0 && (
+          <button
+            onClick={() => setShowHistory(v => !v)}
+            className="ml-auto flex items-center gap-1.5 text-body-sm text-an-fg-subtle hover:text-an-fg-base transition-colors"
+          >
+            <History size={13} strokeWidth={1.5} />
+            History ({history.length})
+          </button>
+        )}
       </div>
+
+      {/* History panel */}
+      {showHistory && history.length > 0 && (
+        <div className="flex-shrink-0 border-b border-an-border bg-an-bg-subtle px-6 py-3 max-h-48 overflow-y-auto">
+          <p className="text-caption text-an-fg-muted mb-2">Past analyses — click to reload</p>
+          <div className="flex flex-col gap-1">
+            {history.map(h => (
+              <button
+                key={h.id}
+                onClick={() => {
+                  setMessages([{ role: 'assistant', content: h.content, id: h.id }])
+                  setShowHistory(false)
+                }}
+                className="flex items-center gap-3 h-8 px-3 rounded text-body-sm text-an-fg-subtle hover:bg-an-bg-surface hover:text-an-fg-base transition-colors text-left"
+              >
+                <FileText size={12} strokeWidth={1.5} className="flex-shrink-0" />
+                <span className="flex-1 truncate">{h.file_name ?? 'Unnamed'}</span>
+                <span className="text-caption text-an-fg-muted flex-shrink-0">
+                  {new Date(h.created_at).toLocaleDateString()}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">

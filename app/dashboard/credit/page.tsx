@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Download, BarChart2, CreditCard, Upload, X, FileText } from 'lucide-react'
+import { Send, Download, BarChart2, CreditCard, Upload, X, FileText, History } from 'lucide-react'
 import Link from 'next/link'
 
 type Message = {
@@ -165,6 +165,8 @@ function ResponseContent({ content }: { content: string }) {
   )
 }
 
+type HistoryEntry = { id: string; file_name: string | null; created_at: string; content: string }
+
 export default function CreditPage() {
   const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([])
@@ -177,6 +179,8 @@ export default function CreditPage() {
   const [fileError, setFileError] = useState('')
   const [autoRan, setAutoRan] = useState(false)
   const [pdfState, setPdfState] = useState<Record<string, { url?: string; generating?: boolean }>>({})
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [showHistory, setShowHistory] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -184,6 +188,11 @@ export default function CreditPage() {
   useEffect(() => {
     const userId = localStorage.getItem('userId')
     if (!userId) { router.replace('/login'); return }
+
+    fetch(`/api/analyses?userId=${userId}&type=credit`)
+      .then(r => r.json())
+      .then((data: HistoryEntry[]) => Array.isArray(data) && setHistory(data))
+      .catch(() => {})
 
     const stored = localStorage.getItem('financial_output')
     if (stored) {
@@ -271,8 +280,20 @@ export default function CreditPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Request failed.')
-      const assistantEntry: Message = { role: 'assistant', content: data.content, id: (Date.now() + 1).toString() }
-      setMessages(prev => [...prev, assistantEntry])
+      const assistantId = (Date.now() + 1).toString()
+      setMessages(prev => [...prev, { role: 'assistant', content: data.content, id: assistantId }])
+
+      const userId = localStorage.getItem('userId')
+      if (userId) {
+        fetch('/api/analyses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, type: 'credit', content: data.content, fileName: fileName || undefined }),
+        })
+          .then(r => r.json())
+          .then((saved: HistoryEntry) => saved?.id && setHistory(prev => [saved, ...prev]))
+          .catch(() => {})
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong.'
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${msg}`, id: (Date.now() + 1).toString() }])
@@ -388,6 +409,15 @@ export default function CreditPage() {
         <div className="flex items-center gap-2.5">
           <CreditCard size={16} strokeWidth={1.5} className="text-an-accent" />
           <h1 className="text-title text-an-fg-base">Credit Readiness</h1>
+          {history.length > 0 && (
+            <button
+              onClick={() => setShowHistory(v => !v)}
+              className="flex items-center gap-1.5 text-body-sm text-an-fg-subtle hover:text-an-fg-base transition-colors"
+            >
+              <History size={13} strokeWidth={1.5} />
+              History ({history.length})
+            </button>
+          )}
         </div>
         <Link
           href="/dashboard/financial"
@@ -397,6 +427,32 @@ export default function CreditPage() {
           Back to Financial Analysis
         </Link>
       </div>
+
+      {/* History panel */}
+      {showHistory && history.length > 0 && (
+        <div className="flex-shrink-0 border-b border-an-border bg-an-bg-subtle px-6 py-3 max-h-48 overflow-y-auto">
+          <p className="text-caption text-an-fg-muted mb-2">Past assessments — click to reload</p>
+          <div className="flex flex-col gap-1">
+            {history.map(h => (
+              <button
+                key={h.id}
+                onClick={() => {
+                  setHasStoredData(true)
+                  setMessages([{ role: 'assistant', content: h.content, id: h.id }])
+                  setShowHistory(false)
+                }}
+                className="flex items-center gap-3 h-8 px-3 rounded text-body-sm text-an-fg-subtle hover:bg-an-bg-surface hover:text-an-fg-base transition-colors text-left"
+              >
+                <FileText size={12} strokeWidth={1.5} className="flex-shrink-0" />
+                <span className="flex-1 truncate">{h.file_name ?? 'From Financial Analysis'}</span>
+                <span className="text-caption text-an-fg-muted flex-shrink-0">
+                  {new Date(h.created_at).toLocaleDateString()}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Upload state */}
       {!hasStoredData && (
