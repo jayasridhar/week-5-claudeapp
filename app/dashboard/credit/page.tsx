@@ -431,24 +431,50 @@ export default function CreditPage() {
       {/* History panel */}
       {showHistory && history.length > 0 && (
         <div className="flex-shrink-0 border-b border-an-border bg-an-bg-subtle px-6 py-3 max-h-48 overflow-y-auto">
-          <p className="text-caption text-an-fg-muted mb-2">Past assessments — click to reload</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-caption text-an-fg-muted">Past assessments — click to reload</p>
+            <button
+              onClick={() => {
+                const userId = localStorage.getItem('userId')
+                if (!userId) return
+                fetch(`/api/analyses?userId=${userId}&type=credit`, { method: 'DELETE' })
+                  .then(() => { setHistory([]); setShowHistory(false) })
+                  .catch(() => {})
+              }}
+              className="text-caption text-an-error hover:underline"
+            >
+              Clear all
+            </button>
+          </div>
           <div className="flex flex-col gap-1">
             {history.map(h => (
-              <button
-                key={h.id}
-                onClick={() => {
-                  setHasStoredData(true)
-                  setMessages([{ role: 'assistant', content: h.content, id: h.id }])
-                  setShowHistory(false)
-                }}
-                className="flex items-center gap-3 h-8 px-3 rounded text-body-sm text-an-fg-subtle hover:bg-an-bg-surface hover:text-an-fg-base transition-colors text-left"
-              >
-                <FileText size={12} strokeWidth={1.5} className="flex-shrink-0" />
-                <span className="flex-1 truncate">{h.file_name ?? 'From Financial Analysis'}</span>
-                <span className="text-caption text-an-fg-muted flex-shrink-0">
-                  {new Date(h.created_at).toLocaleDateString()}
-                </span>
-              </button>
+              <div key={h.id} className="flex items-center gap-2 group">
+                <button
+                  onClick={() => {
+                    setHasStoredData(true)
+                    setMessages([{ role: 'assistant', content: h.content, id: h.id }])
+                    setShowHistory(false)
+                  }}
+                  className="flex flex-1 items-center gap-3 h-8 px-3 rounded text-body-sm text-an-fg-subtle hover:bg-an-bg-surface hover:text-an-fg-base transition-colors text-left min-w-0"
+                >
+                  <FileText size={12} strokeWidth={1.5} className="flex-shrink-0" />
+                  <span className="flex-1 truncate">{h.file_name ?? 'From Financial Analysis'}</span>
+                  <span className="text-caption text-an-fg-muted flex-shrink-0">
+                    {new Date(h.created_at).toLocaleDateString()}
+                  </span>
+                </button>
+                <button
+                  onClick={() => {
+                    fetch(`/api/analyses?id=${h.id}`, { method: 'DELETE' })
+                      .then(() => setHistory(prev => prev.filter(e => e.id !== h.id)))
+                      .catch(() => {})
+                  }}
+                  className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-1 text-an-fg-muted hover:text-an-error transition-colors"
+                  title="Remove"
+                >
+                  <X size={12} strokeWidth={2} />
+                </button>
+              </div>
             ))}
           </div>
         </div>

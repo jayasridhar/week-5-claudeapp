@@ -74,6 +74,16 @@ export async function getAnalyses(
   return data ?? []
 }
 
+export async function deleteAnalysis(id: string): Promise<void> {
+  const { error } = await supabase.from('analyses').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function clearAnalyses(userId: string, type: 'financial' | 'credit'): Promise<void> {
+  const { error } = await supabase.from('analyses').delete().eq('user_id', userId).eq('type', type)
+  if (error) throw error
+}
+
 export type DashboardStats = {
   totalSessions: number
   todaySessions: number
