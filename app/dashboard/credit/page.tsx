@@ -12,7 +12,7 @@ type Message = {
 }
 
 type BlockType = 'table' | 'text' | 'heading'
-type ContentBlock = { type: BlockType; text: string; rows?: string[][] }
+type ContentBlock = { type: BlockType; text?: string; rows?: string[][] }
 
 function isSeparatorLine(line: string) { return /^[\s|:\-+]+$/.test(line) && /[-]/.test(line) }
 function splitFields(line: string, delim: string): string[] {
@@ -112,7 +112,7 @@ function buildCombinedCSV(blocks: ContentBlock[]): string {
     if (block.type === 'table') {
       lines.push(tableToCSV(block.rows!))
     } else {
-      for (const line of block.text.split('\n')) {
+      for (const line of (block.text ?? '').split('\n')) {
         if (line.trim()) lines.push(`"${line.trim().replace(/"/g, '""')}"`)
       }
     }
@@ -336,7 +336,7 @@ export default function CreditPage() {
           doc.setFont('helvetica', 'bold')
           doc.setFontSize(11)
           y += 8
-          doc.text(block.text, margin, y)
+          doc.text(block.text ?? '', margin, y)
           y += 16
         } else if (block.type === 'table') {
           const rows = block.rows!
@@ -372,7 +372,7 @@ export default function CreditPage() {
           doc.setFont('helvetica', 'normal')
           doc.setFontSize(9)
           doc.setTextColor(0, 0, 0)
-          for (const line of block.text.split('\n')) {
+          for (const line of (block.text ?? '').split('\n')) {
             const wrapped = doc.splitTextToSize(line || ' ', maxWidth)
             for (const wl of wrapped) {
               if (y > pageHeight - margin) { doc.addPage(); y = margin }
