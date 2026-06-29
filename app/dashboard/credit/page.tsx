@@ -529,17 +529,25 @@ export default function CreditPage() {
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-[720px] mx-auto flex flex-col gap-6">
 
-              {/* File chip */}
-              {fileName && (
-                <div className="flex items-center gap-2">
+              {/* File chip / upload control */}
+              <div className="flex items-center gap-2">
+                {fileName ? (
                   <span className="flex items-center gap-1.5 h-7 px-2.5 bg-an-bg-surface border border-an-border rounded-full text-body-sm text-an-fg-subtle">
                     {fileName}
                     <button onClick={handleClearFile} className="text-an-fg-muted hover:text-an-fg-base transition-colors">
                       <X size={12} strokeWidth={2} />
                     </button>
                   </span>
-                </div>
-              )}
+                ) : (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-1.5 h-7 px-2.5 bg-an-bg-surface border border-an-border rounded-full text-body-sm text-an-fg-subtle hover:text-an-fg-base hover:border-an-border-strong transition-colors"
+                  >
+                    <Upload size={12} strokeWidth={1.5} />
+                    Upload different file
+                  </button>
+                )}
+              </div>
 
               {messages.map(msg => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
