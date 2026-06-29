@@ -31,7 +31,8 @@ export async function POST(req: NextRequest) {
 - Do NOT include "Header explanation:", "Column order:", "Header:" or similar descriptor lines. The table header row itself is sufficient.
 - For metrics tables (DSO, DIO, DPO, CCC): output only the final calculated numeric value in each cell, not the formula. CORRECT: DSO = (Trade Receivables / Net Sales) x 365,52.56,51.60. WRONG: DSO,...,(7200/50000)*365=52.56,...
 - Never use Excel formula syntax. Never output #NAME? or lines starting with "=".
-- Separate each section with a markdown heading (### Balance Sheet, ### Income Statement, etc.) on its own line.`
+- Separate each section with a markdown heading (### Balance Sheet, ### Income Statement, etc.) on its own line.
+- ALWAYS include a ### Company Overview section at the top with: Company name, reporting currency, and reporting unit (e.g. "Amounts in actual CAD" or "Amounts in CAD 000s"). Determine the unit from the source document — small businesses typically report in actual dollars, not thousands. State it explicitly so downstream analysis does not misinterpret the scale.`
 
     const messageContent = fileText
       ? `${formatInstructions}\n\nFile: ${fileName}\n\n${fileText}\n\nUser question: ${userMessage}`

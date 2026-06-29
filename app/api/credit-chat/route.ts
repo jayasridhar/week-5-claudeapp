@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
 
 ANALYTICAL RULES (critical — follow exactly):
 
-1. UNITS: Always state the reporting currency and unit (e.g. CAD 000s) at the top. Apply that unit consistently to every number and conclusion. Never confuse thousands with actual dollars.
+1. UNITS: Do NOT assume numbers are in thousands (CAD 000s) unless the financial statements explicitly say so. Many small and mid-size Canadian businesses report in actual dollars. Determine the unit scale from context: look at the revenue figure and the company description. A food distributor or small Ontario business with revenue of $2-5 million is reporting in actual dollars, not thousands. State your unit assumption explicitly at the top and justify it (e.g. "Revenue of $2.6M suggests actual CAD, not CAD 000s"). Apply that unit consistently to every number and conclusion. A 1,000x unit error will make credit capacity conclusions completely wrong.
 
 2. EBITDA: Use the correct formula: EBITDA = Net Income + Interest Expense + Income Taxes + Depreciation + Amortization. Never omit interest expense. If interest expense is not explicitly stated, estimate it from average debt balance × a stated assumed rate (e.g. 5–7%) and flag the assumption clearly.
 
