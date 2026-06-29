@@ -540,7 +540,7 @@ export default function CreditPage() {
                   </span>
                 ) : (
                   <button
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={handleClearFile}
                     className="flex items-center gap-1.5 h-7 px-2.5 bg-an-bg-surface border border-an-border rounded-full text-body-sm text-an-fg-subtle hover:text-an-fg-base hover:border-an-border-strong transition-colors"
                   >
                     <Upload size={12} strokeWidth={1.5} />
