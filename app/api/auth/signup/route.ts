@@ -1,27 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { getUser, createUser } from '@/lib/db'
+import { createUser, getUser } from '@/lib/db'
 
 export async function POST(req: NextRequest) {
   try {
     const { email, password } = await req.json()
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
 
-    if (!email || !password) {
+    if (!normalizedEmail || typeof password !== 'string') {
       return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 })
     }
 
-    const existing = await getUser(email)
-    if (existing) {
+    if (password.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
+    }
+
+    const existingUser = await getUser(normalizedEmail)
+    if (existingUser) {
       return NextResponse.json({ error: 'An account with this email already exists.' }, { status: 409 })
     }
 
     const passwordHash = await bcrypt.hash(password, 10)
-    const userId = await createUser(email, passwordHash)
+    const userId = await createUser(normalizedEmail, passwordHash)
 
-    return NextResponse.json({ userId }, { status: 201 })
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : JSON.stringify(err)
-    console.error('[signup]', err)
-    return NextResponse.json({ error: 'Something went wrong. Please try again.', _debug: msg }, { status: 500 })
+    return NextResponse.json({ userId, userEmail: normalizedEmail }, { status: 201 })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Signup failed.'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

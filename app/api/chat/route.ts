@@ -1,15 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { DefaultAzureCredential } from '@azure/identity'
+import { getAzureHeaders } from '@/lib/azure-auth'
 
 const AGENT_ENDPOINT = process.env.AZURE_AGENT_ENDPOINT_URL!
 const AGENT_NAME = process.env.AZURE_AGENT_NAME!
-
-const credential = new DefaultAzureCredential()
-
-async function getToken(): Promise<string> {
-  const tokenResponse = await credential.getToken('https://ai.azure.com/.default')
-  return tokenResponse.token
-}
 
 const SYSTEM_PROMPT =
   'You are an AI assistant. Answer questions based solely on the document text provided. ' +
@@ -24,7 +17,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const token = await getToken()
+    const headers = await getAzureHeaders()
 
     const messageContent = contractText
       ? `${SYSTEM_PROMPT}\n\nDocument text:\n${contractText}\n\nUser question: ${userMessage}`
@@ -32,10 +25,7 @@ export async function POST(req: NextRequest) {
 
     const response = await fetch(`${AGENT_ENDPOINT}/openai/v1/responses`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         input: [{ role: 'user', content: messageContent }],
         agent_reference: {

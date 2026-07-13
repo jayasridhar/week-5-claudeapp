@@ -1,4 +1,4 @@
-# Claude Instructions
+# Codex Instructions
 
 Read ALL of these files before doing anything else:
 - @skills/rules/rules.md

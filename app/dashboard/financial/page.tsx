@@ -44,7 +44,7 @@ function detectDelimiter(line: string): ',' | '|' | '\t' | null {
   return null
 }
 
-// Numbered section titles like "1. Balance Sheet (INR Crore)" should stand
+// Numbered section titles like "1. Balance Sheet (CAD 000s)" should stand
 // out as headings rather than blend into surrounding paragraph text.
 const HEADING_RE = /^\d+\.\s+\S/
 // Markdown headings ("### Balance Sheet") and bold-only lines used as

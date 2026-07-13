@@ -5,23 +5,25 @@ import { getUser } from '@/lib/db'
 export async function POST(req: NextRequest) {
   try {
     const { email, password } = await req.json()
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
 
-    if (!email || !password) {
+    if (!normalizedEmail || typeof password !== 'string') {
       return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 })
     }
 
-    const user = await getUser(email)
+    const user = await getUser(normalizedEmail)
     if (!user) {
       return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 })
     }
 
-    const match = await bcrypt.compare(password, user.password_hash)
-    if (!match) {
+    const isValidPassword = await bcrypt.compare(password, user.password_hash)
+    if (!isValidPassword) {
       return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 })
     }
 
     return NextResponse.json({ userId: user.id, userEmail: user.email })
-  } catch {
-    return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Login failed.'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
