@@ -5,9 +5,15 @@ const MODEL_ID = 'prebuilt-layout'
 const POLL_INTERVAL_MS = 1000
 const MAX_POLLS = 60
 
+function cleanEnvValue(value: string | undefined) {
+  return value?.trim().replace(/^['"]|['"]$/g, '')
+}
+
 function getDocumentIntelligenceConfig() {
-  const endpoint = process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT?.replace(/\/$/, '')
-  const key = process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY
+  const endpoint = cleanEnvValue(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)
+    ?.replace(/\/$/, '')
+    .replace(/\/documentintelligence$/i, '')
+  const key = cleanEnvValue(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY)
 
   if (!endpoint || !key) {
     throw new Error(
