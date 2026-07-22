@@ -19,6 +19,18 @@ type CreditState = {
   error?: string
 }
 
+type ExtractionMeta = {
+  pageCount?: number
+  tableCount?: number
+  warning?: string
+}
+
+type UploadedFile = {
+  name: string
+  text: string
+  meta?: ExtractionMeta
+}
+
 type ContentBlock =
   | { type: 'table'; rows: string[][] }
   | { type: 'text'; text: string }
@@ -236,10 +248,12 @@ function tableToCSV(rows: string[][]): string {
 }
 
 const DEFAULT_EXTRACTION_PROMPT =
-  'Extract and normalize the financial data from the uploaded document. Produce normalized CSV ' +
-  'outputs for the Balance Sheet, Income Statement, Statement of Retained Earnings, and Cash Flow ' +
-  'Statement (estimate the Cash Flow Statement if it is not provided). Include vertical analysis, ' +
-  'horizontal analysis (YoY % change), a 5-year projection, and additional metrics (DSO, DIO, DPO, CCC).'
+  'Extract only the financial data present in the uploaded document and produce raw CSV outputs ' +
+  'for the Balance Sheet, Income Statement, Statement of Retained Earnings, and Cash Flow Statement. ' +
+  'If the Cash Flow Statement is not present, compute it only from the uploaded Balance Sheet and Income ' +
+  'Statement values when the required source values are available. Do not estimate, infer, project, or invent ' +
+  'missing values. If the file cannot be parsed or a statement cannot be extracted or computed from provided data, ' +
+  'clearly say it cannot be parsed, was not provided, or cannot be computed.'
 
 // Dumps the entire response into one CSV, in document order: headings and
 // narrative text become single-column rows, tables become multi-column rows.
@@ -327,7 +341,7 @@ export default function FinancialPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [file, setFile] = useState<{ name: string; text: string } | null>(null)
+  const [file, setFile] = useState<UploadedFile | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [creditState, setCreditState] = useState<Record<string, CreditState>>({})
   const [history, setHistory] = useState<HistoryEntry[]>([])
@@ -363,22 +377,31 @@ export default function FinancialPage() {
       const name = f.name
       const lower = name.toLowerCase()
       let text = ''
+      let meta: ExtractionMeta | undefined
 
       if (lower.endsWith('.csv') || lower.endsWith('.txt') || lower.endsWith('.json')) {
         text = await f.text()
       } else if (lower.endsWith('.pdf')) {
-        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist')
-        GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
-        const buf = await f.arrayBuffer()
-        const pdf = await getDocument({ data: buf }).promise
-        const pages = await Promise.all(
-          Array.from({ length: pdf.numPages }, (_, i) =>
-            pdf.getPage(i + 1).then(p => p.getTextContent()).then(tc =>
-              tc.items.map((it: any) => it.str).join(' ')
-            )
-          )
-        )
-        text = pages.join('\n')
+        const formData = new FormData()
+        formData.append('file', f)
+
+        const extractionRes = await fetch('/api/extract-file', {
+          method: 'POST',
+          body: formData,
+        })
+        const extractionData = await extractionRes.json()
+
+        if (!extractionRes.ok) {
+          setError(extractionData.error ?? 'Failed to extract readable data from this PDF.')
+          return
+        }
+
+        text = extractionData.text ?? ''
+        meta = {
+          pageCount: extractionData.pageCount,
+          tableCount: extractionData.tableCount,
+          warning: extractionData.warning,
+        }
       } else if (lower.endsWith('.docx')) {
         const mammoth = await import('mammoth')
         const buf = await f.arrayBuffer()
@@ -397,10 +420,22 @@ export default function FinancialPage() {
         return
       }
 
-      setFile({ name, text })
+      if (!text.trim()) {
+        setError(
+          lower.endsWith('.pdf')
+            ? 'No readable text was found in this PDF. It may be scanned or image-based; use an OCR/text-based PDF or Excel/CSV export.'
+            : 'No readable financial data was found in this file.'
+        )
+        return
+      }
+
+      setFile({ name, text, meta })
+      const displayMessage = meta
+        ? `Analyze ${name} (${meta.pageCount ?? 0} pages extracted, ${meta.tableCount ?? 0} tables found)`
+        : `Analyze ${name}`
       await sendMessage(DEFAULT_EXTRACTION_PROMPT, {
-        fileOverride: { name, text },
-        displayMessage: `Analyze ${name}`,
+        fileOverride: { name, text, meta },
+        displayMessage,
       })
     } catch {
       setError('Failed to read file. Please try again.')
@@ -411,7 +446,7 @@ export default function FinancialPage() {
 
   async function sendMessage(
     message: string,
-    opts?: { fileOverride?: { name: string; text: string }; displayMessage?: string }
+    opts?: { fileOverride?: UploadedFile; displayMessage?: string }
   ) {
     if (!message || loading) return
     setError('')
@@ -716,11 +751,26 @@ export default function FinancialPage() {
             <div className="flex items-center gap-2 mb-2">
               <span className="flex items-center gap-1.5 h-7 px-2.5 bg-an-bg-surface border border-an-border rounded-full text-body-sm text-an-fg-subtle">
                 {file.name}
+                {file.meta && (
+                  <span className="text-caption text-an-fg-muted">
+                    {file.meta.pageCount ?? 0} pages · {file.meta.tableCount ?? 0} tables
+                  </span>
+                )}
                 <button onClick={() => setFile(null)} className="text-an-fg-muted hover:text-an-fg-base transition-colors">
                   <X size={12} strokeWidth={2} />
                 </button>
               </span>
+              <a
+                href={URL.createObjectURL(new Blob([file.text], { type: 'text/plain' }))}
+                download={`${file.name}.extracted.txt`}
+                className="text-caption text-an-accent hover:underline"
+              >
+                Download extraction
+              </a>
             </div>
+          )}
+          {file?.meta?.warning && (
+            <p className="text-caption text-an-warning mb-2">{file.meta.warning}</p>
           )}
 
           <div className="rounded-xl border border-an-border p-3" style={{ background: 'var(--an-bg-surface)' }}>
