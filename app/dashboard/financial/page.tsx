@@ -271,6 +271,34 @@ function buildCombinedCSV(blocks: ContentBlock[]): string {
   return lines.join('\n')
 }
 
+type ExtractionDiagnostics = {
+  endpointHost?: string
+  endpointPath?: string
+  keyLength?: number
+  endpointLooksLikeCognitiveServices?: boolean
+  vercelEnvironment?: string
+}
+
+type ExtractionErrorResponse = {
+  error?: string
+  diagnostics?: ExtractionDiagnostics
+}
+
+function formatExtractionError(data: ExtractionErrorResponse) {
+  const base = data.error ?? 'Failed to extract readable data from this PDF.'
+  const diagnostics = data.diagnostics
+  if (!diagnostics) return base
+
+  return [
+    base,
+    `Endpoint host: ${diagnostics.endpointHost ?? 'unknown'}`,
+    `Endpoint path: ${diagnostics.endpointPath || '/'}`,
+    `Key length: ${diagnostics.keyLength ?? 0}`,
+    `Looks like Cognitive Services: ${diagnostics.endpointLooksLikeCognitiveServices ? 'yes' : 'no'}`,
+    `Vercel environment: ${diagnostics.vercelEnvironment ?? 'unknown'}`,
+  ].join('\n')
+}
+
 function TableBlock({ rows }: { rows: string[][] }) {
   const [header, ...body] = rows
   return (
@@ -392,7 +420,7 @@ export default function FinancialPage() {
         const extractionData = await extractionRes.json()
 
         if (!extractionRes.ok) {
-          setError(extractionData.error ?? 'Failed to extract readable data from this PDF.')
+          setError(formatExtractionError(extractionData))
           return
         }
 
@@ -813,7 +841,7 @@ export default function FinancialPage() {
             </div>
           </div>
 
-          {error && <p className="text-caption text-an-error text-center mt-2">{error}</p>}
+          {error && <p className="text-caption text-an-error text-center mt-2 whitespace-pre-wrap">{error}</p>}
         </div>
       </div>
     </div>

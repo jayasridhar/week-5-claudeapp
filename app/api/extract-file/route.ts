@@ -5,11 +5,16 @@ const MODEL_ID = 'prebuilt-layout'
 const POLL_INTERVAL_MS = 1000
 const MAX_POLLS = 60
 
+type DocumentIntelligenceConfig = {
+  endpoint: string
+  key: string
+}
+
 function cleanEnvValue(value: string | undefined) {
   return value?.trim().replace(/^['"]|['"]$/g, '')
 }
 
-function getDocumentIntelligenceConfig() {
+function getDocumentIntelligenceConfig(): DocumentIntelligenceConfig {
   const endpoint = cleanEnvValue(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)
     ?.replace(/\/$/, '')
     .replace(/\/documentintelligence$/i, '')
@@ -22,6 +27,31 @@ function getDocumentIntelligenceConfig() {
   }
 
   return { endpoint, key }
+}
+
+function getConfigDiagnostics(config?: Partial<DocumentIntelligenceConfig>) {
+  const endpoint = config?.endpoint ?? cleanEnvValue(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)
+  const key = config?.key ?? cleanEnvValue(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY)
+  let endpointHost = 'missing'
+  let endpointPath = ''
+
+  if (endpoint) {
+    try {
+      const url = new URL(endpoint)
+      endpointHost = url.host
+      endpointPath = url.pathname
+    } catch {
+      endpointHost = 'invalid-url'
+    }
+  }
+
+  return {
+    endpointHost,
+    endpointPath,
+    keyLength: key?.length ?? 0,
+    endpointLooksLikeCognitiveServices: endpointHost.endsWith('.cognitiveservices.azure.com'),
+    vercelEnvironment: process.env.VERCEL_ENV ?? 'local-or-unknown',
+  }
 }
 
 function sleep(ms: number) {
@@ -56,7 +86,11 @@ async function analyzeDocument(file: File) {
 
   if (!analyzeResponse.ok) {
     const error = await analyzeResponse.text()
-    throw new Error(`Document Intelligence analyze failed (${analyzeResponse.status}): ${error}`)
+    const message = `Document Intelligence analyze failed (${analyzeResponse.status}): ${error}`
+    throw Object.assign(new Error(message), {
+      status: analyzeResponse.status,
+      diagnostics: getConfigDiagnostics({ endpoint, key }),
+    })
   }
 
   const operationLocation = analyzeResponse.headers.get('operation-location')
@@ -131,6 +165,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('[extract-file]', err)
     const message = err instanceof Error ? err.message : 'Failed to extract the file.'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const diagnostics = typeof err === 'object' && err !== null && 'diagnostics' in err
+      ? (err as { diagnostics?: unknown }).diagnostics
+      : getConfigDiagnostics()
+    return NextResponse.json({ error: message, diagnostics }, { status: 500 })
   }
 }
