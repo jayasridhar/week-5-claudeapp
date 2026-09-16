@@ -2,14 +2,13 @@
 
 import { useRef, useState } from 'react'
 import { Paperclip, X } from 'lucide-react'
+import { formatBytes, MAX_EXTRACTED_TEXT_CHARS, MAX_PDF_PAGES, MAX_UPLOAD_BYTES } from '@/lib/usage-limits'
 
 type Props = {
   onFileLoaded: (text: string, filename: string, blobUrl: string, fileType: string) => void
   onClear: () => void
   filename: string | null
 }
-
-const MAX_SIZE = 10 * 1024 * 1024 // 10 MB
 
 export default function FileUpload({ onFileLoaded, onClear, filename }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -23,8 +22,8 @@ export default function FileUpload({ onFileLoaded, onClear, filename }: Props) {
       setError('Only PDF and DOCX files are accepted.')
       return
     }
-    if (file.size > MAX_SIZE) {
-      setError('File must be under 10 MB.')
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`File must be under ${formatBytes(MAX_UPLOAD_BYTES)}.`)
       return
     }
 
@@ -42,6 +41,13 @@ export default function FileUpload({ onFileLoaded, onClear, filename }: Props) {
         GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
         const pdf = await getDocument({ data: arrayBuffer }).promise
+        const pageCount = pdf.numPages
+        if (pageCount > MAX_PDF_PAGES) {
+          await pdf.destroy()
+          URL.revokeObjectURL(blobUrl)
+          setError(`PDF has ${pageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.`)
+          return
+        }
         const pages: string[] = []
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i)
@@ -49,10 +55,16 @@ export default function FileUpload({ onFileLoaded, onClear, filename }: Props) {
           pages.push(content.items.map((item) => ('str' in item ? item.str : '')).join(' '))
         }
         const text = pages.join('\n\n')
+        await pdf.destroy()
 
         if (!text.trim()) {
           URL.revokeObjectURL(blobUrl)
           setError('No extractable text found. This may be a scanned PDF — please use a text-based PDF.')
+          return
+        }
+        if (text.length > MAX_EXTRACTED_TEXT_CHARS) {
+          URL.revokeObjectURL(blobUrl)
+          setError('Extracted text is too large for the testing guardrail. Use a shorter document.')
           return
         }
 
@@ -65,6 +77,10 @@ export default function FileUpload({ onFileLoaded, onClear, filename }: Props) {
 
         if (!text.trim()) {
           setError('No extractable text found in this document.')
+          return
+        }
+        if (text.length > MAX_EXTRACTED_TEXT_CHARS) {
+          setError('Extracted text is too large for the testing guardrail. Use a shorter document.')
           return
         }
 

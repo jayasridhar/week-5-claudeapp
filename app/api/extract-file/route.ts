@@ -1,4 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { countAnalysesSince } from '@/lib/db'
+import {
+  getDailyAnalysisLimit,
+  getDailyLimitMessage,
+  getTodayStartIso,
+  MAX_EXTRACTED_TEXT_CHARS,
+  MAX_PDF_PAGES,
+  MAX_UPLOAD_BYTES,
+  formatBytes,
+} from '@/lib/usage-limits'
 
 const API_VERSION = '2024-11-30'
 const MODEL_ID = 'prebuilt-layout'
@@ -67,6 +77,12 @@ function getOperationId(operationLocation: string) {
   }
 }
 
+async function estimatePdfPageCount(file: File) {
+  const bytes = Buffer.from(await file.arrayBuffer())
+  const raw = bytes.toString('latin1')
+  return (raw.match(/\/Type\s*\/Page\b/g) ?? []).length
+}
+
 async function analyzeDocument(file: File) {
   const { endpoint, key } = getDocumentIntelligenceConfig()
   const bytes = Buffer.from(await file.arrayBuffer())
@@ -133,9 +149,26 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
     const file = formData.get('file')
+    const userId = formData.get('userId')
+
+    if (typeof userId !== 'string' || !userId) {
+      return NextResponse.json({ error: 'Login is required before extracting a PDF.' }, { status: 401 })
+    }
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: 'A file upload is required.' }, { status: 400 })
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `File is too large. Upload files up to ${formatBytes(MAX_UPLOAD_BYTES)}.` },
+        { status: 413 }
+      )
+    }
+
+    const usedToday = await countAnalysesSince(userId, 'financial', getTodayStartIso())
+    if (usedToday >= getDailyAnalysisLimit('financial')) {
+      return NextResponse.json({ error: getDailyLimitMessage('financial') }, { status: 429 })
     }
 
     const lowerName = file.name.toLowerCase()
@@ -143,11 +176,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Only PDF extraction is supported by this route.' }, { status: 400 })
     }
 
+    const estimatedPageCount = await estimatePdfPageCount(file)
+    if (estimatedPageCount > MAX_PDF_PAGES) {
+      return NextResponse.json(
+        { error: `PDF has ${estimatedPageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.` },
+        { status: 413 }
+      )
+    }
+
     const result = await analyzeDocument(file)
     if (!result.content.trim()) {
       return NextResponse.json(
         { error: 'No readable text or tables were extracted from this PDF.' },
         { status: 422 }
+      )
+    }
+    if (result.content.length > MAX_EXTRACTED_TEXT_CHARS) {
+      return NextResponse.json(
+        { error: `Extracted text is too large for the testing guardrail. Use a shorter document or split it into smaller files.` },
+        { status: 413 }
       )
     }
 

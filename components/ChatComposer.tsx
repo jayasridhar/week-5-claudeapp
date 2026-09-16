@@ -74,6 +74,7 @@ export default function ChatComposer({ sessionId, onMessageSent, onSessionTitleU
           sessionId,
           contractText: filePreview?.extractedText ?? '',
           userMessage: message,
+          userId: localStorage.getItem('userId') ?? '',
         }),
       })
 

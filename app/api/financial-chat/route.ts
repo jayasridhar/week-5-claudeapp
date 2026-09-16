@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAzureHeaders } from '@/lib/azure-auth'
+import { countAnalysesSince } from '@/lib/db'
+import {
+  getDailyAnalysisLimit,
+  getDailyLimitMessage,
+  getTodayStartIso,
+  MAX_EXTRACTED_TEXT_CHARS,
+} from '@/lib/usage-limits'
 
 const AGENT_ENDPOINT = process.env.AZURE_AGENT_ENDPOINT_URL!
 const AGENT_NAME = process.env.AZURE_FINANCIAL_AGENT_NAME!
@@ -34,7 +41,10 @@ function enforceCurrencyGuard(content: string, fileText: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const { fileText, fileName, userMessage } = await req.json()
+  const { fileText, fileName, userMessage, userId } = await req.json()
+  if (!userId) {
+    return NextResponse.json({ error: 'Login is required before running financial analysis.' }, { status: 401 })
+  }
   if (!userMessage) {
     return NextResponse.json({ error: 'userMessage is required.' }, { status: 400 })
   }
@@ -44,8 +54,19 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     )
   }
+  if ((fileText ?? '').length > MAX_EXTRACTED_TEXT_CHARS) {
+    return NextResponse.json(
+      { error: 'The extracted document text is too large for the testing guardrail. Use a shorter document or split it into smaller files.' },
+      { status: 413 }
+    )
+  }
 
   try {
+    const usedToday = await countAnalysesSince(userId, 'financial', getTodayStartIso())
+    if (usedToday >= getDailyAnalysisLimit('financial')) {
+      return NextResponse.json({ error: getDailyLimitMessage('financial') }, { status: 429 })
+    }
+
     const headers = await getAzureHeaders()
 
     const formatInstructions = `FORMATTING RULES (follow exactly):
@@ -82,7 +103,7 @@ export async function POST(req: NextRequest) {
           name: AGENT_NAME,
           type: 'agent_reference',
         },
-        max_output_tokens: 32000,
+        max_output_tokens: 12000,
       }),
     })
 

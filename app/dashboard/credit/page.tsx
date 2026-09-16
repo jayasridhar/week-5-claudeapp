@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Send, Download, BarChart2, CreditCard, Upload, X, FileText, History } from 'lucide-react'
 import Link from 'next/link'
+import { detectCurrency, formatFinancialTableCell } from '@/lib/financial-format'
+import { formatBytes, MAX_PDF_PAGES, MAX_UPLOAD_BYTES } from '@/lib/usage-limits'
 
 type Message = {
   role: 'user' | 'assistant'
@@ -120,7 +122,7 @@ function buildCombinedCSV(blocks: ContentBlock[]): string {
   return lines.join('\n')
 }
 
-function TableBlock({ rows }: { rows: string[][] }) {
+function TableBlock({ rows, currency }: { rows: string[][]; currency: ReturnType<typeof detectCurrency> }) {
   const [header, ...body] = rows
   return (
     <div className="overflow-x-auto rounded-lg border border-an-border">
@@ -138,7 +140,9 @@ function TableBlock({ rows }: { rows: string[][] }) {
           {body.map((row, i) => (
             <tr key={i} className={i % 2 === 0 ? 'bg-an-bg-base' : 'bg-an-bg-subtle'}>
               {row.map((cell, j) => (
-                <td key={j} className="px-3 py-2 border-b border-an-border whitespace-nowrap">{cell}</td>
+                <td key={j} className={`px-3 py-2 border-b border-an-border whitespace-nowrap ${j > 0 ? 'text-right tabular-nums' : ''}`}>
+                  {formatFinancialTableCell(cell, rows, i + 1, j, currency)}
+                </td>
               ))}
             </tr>
           ))}
@@ -150,10 +154,11 @@ function TableBlock({ rows }: { rows: string[][] }) {
 
 function ResponseContent({ content }: { content: string }) {
   const blocks = parseBlocks(content)
+  const currency = detectCurrency(content)
   return (
     <div className="flex flex-col gap-4">
       {blocks.map((block, i) => {
-        if (block.type === 'table') return <TableBlock key={i} rows={block.rows!} />
+        if (block.type === 'table') return <TableBlock key={i} rows={block.rows!} currency={currency} />
         if (block.type === 'heading') {
           return <h3 key={i} className="text-title text-an-fg-base font-medium mt-2">{block.text}</h3>
         }
@@ -216,6 +221,16 @@ export default function CreditPage() {
     setFileLoading(true)
     setFileError('')
     try {
+      const userId = localStorage.getItem('userId')
+      if (!userId) {
+        router.replace('/login')
+        return
+      }
+      if (f.size > MAX_UPLOAD_BYTES) {
+        setFileError(`File is too large. Upload files up to ${formatBytes(MAX_UPLOAD_BYTES)} while testing.`)
+        return
+      }
+
       const name = f.name
       const lower = name.toLowerCase()
       let text = ''
@@ -225,6 +240,12 @@ export default function CreditPage() {
         GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
         const buf = await f.arrayBuffer()
         const pdf = await getDocument({ data: buf }).promise
+        const pageCount = pdf.numPages
+        if (pageCount > MAX_PDF_PAGES) {
+          await pdf.destroy()
+          setFileError(`PDF has ${pageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.`)
+          return
+        }
         const pages = await Promise.all(
           Array.from({ length: pdf.numPages }, (_, idx) =>
             pdf.getPage(idx + 1).then(p => p.getTextContent()).then(tc =>
@@ -232,6 +253,7 @@ export default function CreditPage() {
             )
           )
         )
+        await pdf.destroy()
         text = pages.join('\n')
       } else if (lower.endsWith('.docx')) {
         const mammoth = await import('mammoth')
@@ -276,7 +298,7 @@ export default function CreditPage() {
       const res = await fetch('/api/credit-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ normalizedText: text, userMessage }),
+        body: JSON.stringify({ normalizedText: text, userMessage, userId: localStorage.getItem('userId') ?? '' }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Request failed.')
@@ -513,7 +535,7 @@ export default function CreditPage() {
               <span className="text-body-sm text-an-fg-subtle">
                 {fileLoading ? 'Reading file…' : 'Click to upload'}
               </span>
-              <span className="text-caption text-an-fg-muted">PDF, DOCX, CSV, Excel, TXT</span>
+              <span className="text-caption text-an-fg-muted">PDF, DOCX, CSV, Excel, TXT · {formatBytes(MAX_UPLOAD_BYTES)} max · {MAX_PDF_PAGES} PDF pages</span>
             </button>
 
             {fileError && (

@@ -1,16 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAzureHeaders } from '@/lib/azure-auth'
+import { countAnalysesSince } from '@/lib/db'
+import {
+  getDailyAnalysisLimit,
+  getDailyLimitMessage,
+  getTodayStartIso,
+  MAX_EXTRACTED_TEXT_CHARS,
+} from '@/lib/usage-limits'
 
 const AGENT_ENDPOINT = process.env.AZURE_AGENT_ENDPOINT_URL!
 const AGENT_NAME = process.env.AZURE_CREDIT_AGENT_NAME!
 
 export async function POST(req: NextRequest) {
-  const { normalizedText, userMessage } = await req.json()
+  const { normalizedText, userMessage, userId } = await req.json()
+  if (!userId) {
+    return NextResponse.json({ error: 'Login is required before running credit analysis.' }, { status: 401 })
+  }
   if (!normalizedText) {
     return NextResponse.json({ error: 'normalizedText is required.' }, { status: 400 })
   }
+  if (normalizedText.length > MAX_EXTRACTED_TEXT_CHARS) {
+    return NextResponse.json(
+      { error: 'The financial data is too large for the testing guardrail. Use a shorter document or split it into smaller files.' },
+      { status: 413 }
+    )
+  }
 
   try {
+    const usedToday = await countAnalysesSince(userId, 'credit', getTodayStartIso())
+    if (usedToday >= getDailyAnalysisLimit('credit')) {
+      return NextResponse.json({ error: getDailyLimitMessage('credit') }, { status: 429 })
+    }
+
     const headers = await getAzureHeaders()
 
     const formatInstructions = `You are a senior Canadian credit analyst preparing a credit readiness assessment for a commercial lender. Apply rigorous, lender-grade methodology throughout.
@@ -54,7 +75,7 @@ FORMATTING RULES:
           name: AGENT_NAME,
           type: 'agent_reference',
         },
-        max_output_tokens: 32000,
+        max_output_tokens: 12000,
       }),
     })
 

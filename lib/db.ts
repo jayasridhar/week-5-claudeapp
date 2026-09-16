@@ -87,6 +87,21 @@ export async function clearAnalyses(userId: string, type: 'financial' | 'credit'
   if (error) throw error
 }
 
+export async function countAnalysesSince(
+  userId: string,
+  type: 'financial' | 'credit',
+  sinceIso: string
+): Promise<number> {
+  const { count, error } = await supabaseServer
+    .from('analyses')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('type', type)
+    .gte('created_at', sinceIso)
+  if (error) throw error
+  return count ?? 0
+}
+
 export type DashboardStats = {
   totalSessions: number
   todaySessions: number

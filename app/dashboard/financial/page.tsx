@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Upload, X, Send, Download, FileText, Eye, EyeOff, CreditCard, History } from 'lucide-react'
+import { detectCurrency, formatFinancialTableCell } from '@/lib/financial-format'
+import { formatBytes, MAX_PDF_PAGES, MAX_UPLOAD_BYTES } from '@/lib/usage-limits'
 
 type Message = {
   role: 'user' | 'assistant'
@@ -299,7 +301,7 @@ function formatExtractionError(data: ExtractionErrorResponse) {
   ].join('\n')
 }
 
-function TableBlock({ rows }: { rows: string[][] }) {
+function TableBlock({ rows, currency }: { rows: string[][]; currency: ReturnType<typeof detectCurrency> }) {
   const [header, ...body] = rows
   return (
     <div className="overflow-x-auto rounded-lg border border-an-border">
@@ -317,7 +319,9 @@ function TableBlock({ rows }: { rows: string[][] }) {
           {body.map((row, i) => (
             <tr key={i} className={i % 2 === 0 ? 'bg-an-bg-base' : 'bg-an-bg-subtle'}>
               {row.map((cell, j) => (
-                <td key={j} className="px-3 py-2 border-b border-an-border">{cell}</td>
+                <td key={j} className={`px-3 py-2 border-b border-an-border ${j > 0 ? 'text-right tabular-nums' : ''}`}>
+                  {formatFinancialTableCell(cell, rows, i + 1, j, currency)}
+                </td>
               ))}
             </tr>
           ))}
@@ -329,11 +333,12 @@ function TableBlock({ rows }: { rows: string[][] }) {
 
 function ResponseContent({ content }: { content: string }) {
   const blocks = parseBlocks(content)
+  const currency = detectCurrency(content)
 
   return (
     <div className="flex flex-col gap-4">
       {blocks.map((block, i) => {
-        if (block.type === 'table') return <TableBlock key={i} rows={block.rows} />
+        if (block.type === 'table') return <TableBlock key={i} rows={block.rows} currency={currency} />
         if (block.type === 'heading') {
           return (
             <h3 key={i} className="text-title text-an-fg-base font-medium mt-2">
@@ -402,6 +407,16 @@ export default function FinancialPage() {
     setFileLoading(true)
     setError('')
     try {
+      const userId = localStorage.getItem('userId')
+      if (!userId) {
+        router.replace('/login')
+        return
+      }
+      if (f.size > MAX_UPLOAD_BYTES) {
+        setError(`File is too large. Upload files up to ${formatBytes(MAX_UPLOAD_BYTES)} while testing.`)
+        return
+      }
+
       const name = f.name
       const lower = name.toLowerCase()
       let text = ''
@@ -410,8 +425,21 @@ export default function FinancialPage() {
       if (lower.endsWith('.csv') || lower.endsWith('.txt') || lower.endsWith('.json')) {
         text = await f.text()
       } else if (lower.endsWith('.pdf')) {
+        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist')
+        GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        const buf = await f.arrayBuffer()
+        const pdf = await getDocument({ data: buf }).promise
+        const pageCount = pdf.numPages
+        await pdf.destroy()
+
+        if (pageCount > MAX_PDF_PAGES) {
+          setError(`PDF has ${pageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.`)
+          return
+        }
+
         const formData = new FormData()
         formData.append('file', f)
+        formData.append('userId', userId)
 
         const extractionRes = await fetch('/api/extract-file', {
           method: 'POST',
@@ -491,6 +519,7 @@ export default function FinancialPage() {
           fileText: activeFile?.text ?? '',
           fileName: activeFile?.name ?? '',
           userMessage: message,
+          userId: localStorage.getItem('userId') ?? '',
         }),
       })
       const data = await res.json()
@@ -829,7 +858,7 @@ export default function FinancialPage() {
                   <Upload size={12} strokeWidth={1.5} />
                   {fileLoading ? 'Reading…' : 'Upload file'}
                 </button>
-                <span className="text-caption text-an-fg-muted">PDF, Excel, CSV, JSON, TXT</span>
+                <span className="text-caption text-an-fg-muted">PDF, Excel, CSV, JSON, TXT · {formatBytes(MAX_UPLOAD_BYTES)} max · {MAX_PDF_PAGES} PDF pages</span>
               </div>
               <button
                 onClick={handleSend}
