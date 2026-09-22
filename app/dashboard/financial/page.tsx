@@ -2,23 +2,13 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, X, Send, Download, FileText, Eye, EyeOff, CreditCard, History } from 'lucide-react'
-import { detectCurrency, formatFinancialTableCell } from '@/lib/financial-format'
+import { Upload, X, Send, Download, FileText, History } from 'lucide-react'
 import { formatBytes, MAX_PDF_PAGES, MAX_UPLOAD_BYTES } from '@/lib/usage-limits'
 
 type Message = {
   role: 'user' | 'assistant'
   content: string
   id: string
-}
-
-type CreditState = {
-  pdfUrl?: string
-  generating?: boolean
-  sending?: boolean
-  showPreview?: boolean
-  summary?: string
-  error?: string
 }
 
 type ExtractionMeta = {
@@ -37,6 +27,10 @@ type ContentBlock =
   | { type: 'table'; rows: string[][] }
   | { type: 'text'; text: string }
   | { type: 'heading'; text: string }
+
+type WorkbookCell = string | number | { t?: string; v?: string | number; f?: string; z?: string }
+
+const WHOLE_NUMBER_FORMAT = '#,##0;-#,##0;0'
 
 function isSeparatorLine(line: string): boolean {
   return /^[\s|:\-+]+$/.test(line) && /[-]/.test(line)
@@ -268,6 +262,316 @@ function tableToCSV(rows: string[][]): string {
   return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
 }
 
+function excelColumn(index: number) {
+  let col = ''
+  let n = index + 1
+  while (n > 0) {
+    const rem = (n - 1) % 26
+    col = String.fromCharCode(65 + rem) + col
+    n = Math.floor((n - 1) / 26)
+  }
+  return col
+}
+
+function excelRef(rowIndex: number, colIndex: number) {
+  return `${excelColumn(colIndex)}${rowIndex + 1}`
+}
+
+function normalizeAccount(label: string) {
+  return label.trim().toLowerCase()
+}
+
+function parseFinancialNumber(raw: string) {
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed === '-') return null
+  const negative = trimmed.startsWith('-') || /^\(.*\)$/.test(trimmed)
+  const cleaned = trimmed
+    .replace(/[,$₹%]/g, '')
+    .replace(/[()]/g, '')
+    .trim()
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null
+  const value = Number(cleaned)
+  if (!Number.isFinite(value)) return null
+  return negative ? -Math.abs(value) : value
+}
+
+function workbookValue(cell: string, header: string): WorkbookCell {
+  const parsed = parseFinancialNumber(cell)
+  if (parsed === null || /^\d{4}$/.test(cell.trim())) return cell
+  if (header.includes('%') || cell.includes('%')) {
+    return { t: 'n', v: parsed / 100, z: '0.0%' }
+  }
+  return { t: 'n', v: parsed, z: WHOLE_NUMBER_FORMAT }
+}
+
+function getCellNumber(row: WorkbookCell[] | undefined, colIndex: number) {
+  const cell = row?.[colIndex]
+  if (typeof cell === 'number') return cell
+  if (typeof cell === 'object' && typeof cell.v === 'number') return cell.v
+  if (typeof cell === 'string') return parseFinancialNumber(cell)
+  return null
+}
+
+function formulaCell(formula: string, value: number | null, isPercent = false): WorkbookCell {
+  return {
+    t: 'n',
+    f: formula,
+    v: value ?? 0,
+    z: isPercent ? '0.0%' : WHOLE_NUMBER_FORMAT,
+  }
+}
+
+const FORMULA_TEXT: Record<string, string> = {
+  'cost of sales': 'Materials + Labour + Variable Costs + Fixed Costs when Cost of Sales is not provided',
+  'gross margin': 'Gross Revenue - Cost of Sales',
+  'operating costs': 'Logistics + SG&A + Depreciation + Interest when Operating Costs is not provided',
+  'operating income': 'Gross Margin - Operating Costs',
+  'net income': 'Operating Income - Corporate Tax when Net Income is not provided; otherwise extracted from source',
+  ebitda: 'Net Income + Interest + Depreciation + Corporate Tax',
+  'total assets': 'Cash + Accounts receivable + Inventory + Prepaids and deposits + Property and equipment + Due from related parties when Total Assets is not provided',
+  'total liabilities': 'Bank indebtedness + Accounts payable + Income taxes payable + Short-term loans + Due to related parties + CEBA loan + Long-term loans when Total Liabilities is not provided',
+  'shareholder equity': 'Common Shares + Retained Earnings when Shareholder Equity is not provided',
+  'tl + se': 'Total Liabilities + Shareholder Equity',
+  'cash provided by (used in) operating activities': 'Net income + Depreciation + Working capital changes',
+  'cash used in investing activities': 'Acquisition of property and equipment',
+  'cash used for financing activities': 'Bank loan activity + Related party activity + Dividends + Shareholder loan activity',
+  'increase (decrease) in cash': 'Operating cash flow + Investing cash flow + Financing cash flow',
+  'cash - beginning of year': 'Prior year computed Cash - End of year; earliest year starts at zero',
+  'cash - end of year': 'Cash - Beginning of year + Increase decrease in cash',
+}
+
+function setFormulaIfRowsExist(
+  aoa: WorkbookCell[][],
+  rowMap: Map<string, number>,
+  targetLabel: string,
+  colIndex: number,
+  refs: string[],
+  formula: (rows: number[]) => string
+) {
+  const targetRow = rowMap.get(normalizeAccount(targetLabel))
+  const refRows = refs.map(ref => rowMap.get(normalizeAccount(ref)))
+  if (targetRow === undefined || refRows.some(row => row === undefined)) return
+  const existing = getCellNumber(aoa[targetRow], colIndex)
+  aoa[targetRow][colIndex] = formulaCell(formula(refRows as number[]), existing)
+}
+
+function applyStatementFormulas(
+  aoa: WorkbookCell[][],
+  rowMap: Map<string, number>,
+  amountCols: number[],
+  percentCols: number[],
+  horizontalCol?: number
+) {
+  amountCols.forEach(col => {
+    setFormulaIfRowsExist(aoa, rowMap, 'Cost of Sales', col, ['Materials', 'Labour', 'Variable Costs', 'Fixed Costs'], rows =>
+      rows.map(row => excelRef(row, col)).join('+')
+    )
+    setFormulaIfRowsExist(aoa, rowMap, 'Gross Margin', col, ['Gross Revenue', 'Cost of Sales'], ([revenue, cost]) =>
+      `${excelRef(revenue, col)}-${excelRef(cost, col)}`
+    )
+    setFormulaIfRowsExist(aoa, rowMap, 'Operating Costs', col, ['Logistics', 'SG&A', 'Depreciation', 'Interest'], rows =>
+      rows.map(row => excelRef(row, col)).join('+')
+    )
+    setFormulaIfRowsExist(aoa, rowMap, 'Operating Income', col, ['Gross Margin', 'Operating Costs'], ([margin, costs]) =>
+      `${excelRef(margin, col)}-${excelRef(costs, col)}`
+    )
+    setFormulaIfRowsExist(aoa, rowMap, 'EBITDA', col, ['Net Income', 'Interest', 'Depreciation', 'Corporate Tax'], rows =>
+      rows.map(row => excelRef(row, col)).join('+')
+    )
+  })
+
+  const revenueRow = rowMap.get('gross revenue')
+  if (revenueRow !== undefined) {
+    percentCols.forEach((col, index) => {
+      const amountCol = amountCols[index]
+      if (amountCol === undefined) return
+      rowMap.forEach(row => {
+        const existing = getCellNumber(aoa[row], col)
+        if (existing === null) return
+        aoa[row][col] = formulaCell(`${excelRef(row, amountCol)}/${excelRef(revenueRow, amountCol)}`, existing, true)
+      })
+    })
+  }
+
+  if (horizontalCol !== undefined && amountCols.length >= 2) {
+    rowMap.forEach(row => {
+      const existing = getCellNumber(aoa[row], horizontalCol)
+      if (existing === null) return
+      aoa[row][horizontalCol] = formulaCell(`${excelRef(row, amountCols[0])}/${excelRef(row, amountCols[1])}-1`, existing, true)
+    })
+  }
+}
+
+function applyBalanceFormulas(
+  aoa: WorkbookCell[][],
+  rowMap: Map<string, number>,
+  amountCols: number[],
+  percentCols: number[],
+  horizontalCol?: number
+) {
+  const assetLabels = ['Cash', 'Accounts receivable (net)', 'Inventory', 'Prepaid Expenses & Deposits', 'Property & Equipment', 'Due from Related Parties']
+  const liabilityLabels = ['Bank Indebtedness', 'Accounts Payable & Accrued Liabilities', 'Income taxes payable', 'Short-term Loans', 'Due to related parties', 'CEBA Loan payable', 'Long-term Loans']
+
+  amountCols.forEach(col => {
+    setFormulaIfRowsExist(aoa, rowMap, 'Total Assets', col, assetLabels, rows => rows.map(row => excelRef(row, col)).join('+'))
+    setFormulaIfRowsExist(aoa, rowMap, 'Total Liabilities', col, liabilityLabels, rows => rows.map(row => excelRef(row, col)).join('+'))
+    setFormulaIfRowsExist(aoa, rowMap, 'Shareholder Equity', col, ['Common Shares', 'Retained Earnings'], rows => rows.map(row => excelRef(row, col)).join('+'))
+    setFormulaIfRowsExist(aoa, rowMap, 'TL + SE', col, ['Total Liabilities', 'Shareholder Equity'], rows => rows.map(row => excelRef(row, col)).join('+'))
+  })
+
+  percentCols.forEach((col, index) => {
+    const amountCol = amountCols[index]
+    if (amountCol === undefined) return
+    rowMap.forEach((row, label) => {
+      const existing = getCellNumber(aoa[row], col)
+      if (existing === null) return
+      let baseLabel = 'total assets'
+      if (['bank indebtedness', 'accounts payable & accrued liabilities', 'income taxes payable', 'short-term loans', 'due to related parties', 'ceba loan payable', 'long-term loans'].includes(label)) {
+        baseLabel = 'total liabilities'
+      } else if (['common shares', 'retained earnings'].includes(label)) {
+        baseLabel = 'shareholder equity'
+      }
+      const baseRow = rowMap.get(baseLabel)
+      if (baseRow !== undefined) aoa[row][col] = formulaCell(`${excelRef(row, amountCol)}/${excelRef(baseRow, amountCol)}`, existing, true)
+    })
+  })
+
+  if (horizontalCol !== undefined && amountCols.length >= 2) {
+    rowMap.forEach(row => {
+      const existing = getCellNumber(aoa[row], horizontalCol)
+      if (existing === null) return
+      aoa[row][horizontalCol] = formulaCell(`${excelRef(row, amountCols[0])}/${excelRef(row, amountCols[1])}-1`, existing, true)
+    })
+  }
+}
+
+function applyCashFlowFormulas(
+  aoa: WorkbookCell[][],
+  cashMap: Map<string, number>,
+  incomeMap: Map<string, number> | undefined,
+  balanceMap: Map<string, number> | undefined,
+  amountCols: number[]
+) {
+  const setDirect = (target: string, sourceMap: Map<string, number> | undefined, source: string, col: number) => {
+    const targetRow = cashMap.get(normalizeAccount(target))
+    const sourceRow = sourceMap?.get(normalizeAccount(source))
+    if (targetRow === undefined || sourceRow === undefined) return
+    const existing = getCellNumber(aoa[targetRow], col)
+    aoa[targetRow][col] = formulaCell(excelRef(sourceRow, col), existing)
+  }
+
+  amountCols.forEach((col, index) => {
+    const priorCol = amountCols[index + 1]
+    setDirect('Net income', incomeMap, 'Net Income', col)
+    setDirect('Depreciation and amortization', incomeMap, 'Depreciation', col)
+
+    const balanceFormula = (label: string, reverse: boolean) => {
+      const targetRow = cashMap.get(normalizeAccount(label))
+      const sourceLabel = label === 'Accounts receivable'
+        ? 'Accounts receivable (net)'
+        : label === 'Inventories'
+          ? 'Inventory'
+          : label === 'Prepaid and deposits'
+            ? 'Prepaid Expenses & Deposits'
+            : label === 'Accounts payable and accrued liabilities'
+              ? 'Accounts Payable & Accrued Liabilities'
+              : label
+      const sourceRow = balanceMap?.get(normalizeAccount(sourceLabel))
+      if (targetRow === undefined || sourceRow === undefined) return
+      const existing = getCellNumber(aoa[targetRow], col)
+      if (priorCol !== undefined) {
+        aoa[targetRow][col] = formulaCell(
+          reverse
+            ? `${excelRef(sourceRow, priorCol)}-${excelRef(sourceRow, col)}`
+            : `${excelRef(sourceRow, col)}-${excelRef(sourceRow, priorCol)}`,
+          existing
+        )
+      } else {
+        aoa[targetRow][col] = formulaCell(reverse ? `-${excelRef(sourceRow, col)}` : excelRef(sourceRow, col), existing)
+      }
+    }
+
+    balanceFormula('Accounts receivable', true)
+    balanceFormula('Inventories', true)
+    balanceFormula('Prepaid and deposits', true)
+    balanceFormula('Accounts payable and accrued liabilities', false)
+    balanceFormula('Income taxes payable', false)
+    balanceFormula('Advances to related corporations', false)
+
+    const acquisitionRow = cashMap.get('acquisition of property and equipment')
+    const ppeRow = balanceMap?.get('property & equipment')
+    if (acquisitionRow !== undefined && ppeRow !== undefined) {
+      const existing = getCellNumber(aoa[acquisitionRow], col)
+      aoa[acquisitionRow][col] = formulaCell(
+        priorCol !== undefined ? `${excelRef(ppeRow, priorCol)}-${excelRef(ppeRow, col)}` : `-${excelRef(ppeRow, col)}`,
+        existing
+      )
+    }
+
+    setFormulaIfRowsExist(
+      aoa,
+      cashMap,
+      'Cash provided by (used in) operating activities',
+      col,
+      ['Net income', 'Depreciation and amortization', 'Accounts receivable', 'Inventories', 'Prepaid and deposits', 'Accounts payable and accrued liabilities', 'Income taxes payable'],
+      rows => rows.map(row => excelRef(row, col)).join('+')
+    )
+    setFormulaIfRowsExist(aoa, cashMap, 'Cash used in investing activities', col, ['Acquisition of property and equipment'], ([row]) => excelRef(row, col))
+
+    const proceedsRow = cashMap.get('proceeds from (repayment of) bank loan')
+    const cashBeginningRow = cashMap.get('cash - beginning of year')
+    const operatingRow = cashMap.get('cash provided by (used in) operating activities')
+    const investingRow = cashMap.get('cash used in investing activities')
+    const advancesRow = cashMap.get('advances to related corporations')
+    const balanceCashRow = balanceMap?.get('cash')
+    if (
+      proceedsRow !== undefined &&
+      cashBeginningRow !== undefined &&
+      operatingRow !== undefined &&
+      investingRow !== undefined &&
+      advancesRow !== undefined
+    ) {
+      const existing = getCellNumber(aoa[proceedsRow], col)
+      const targetCashChange = balanceCashRow !== undefined && priorCol !== undefined
+        ? `${excelRef(balanceCashRow, col)}-${excelRef(cashBeginningRow, col)}`
+        : `0-${excelRef(cashBeginningRow, col)}`
+      aoa[proceedsRow][col] = formulaCell(
+        `${targetCashChange}-${excelRef(operatingRow, col)}-${excelRef(investingRow, col)}-${excelRef(advancesRow, col)}`,
+        existing
+      )
+    }
+
+    setFormulaIfRowsExist(
+      aoa,
+      cashMap,
+      'Cash used for financing activities',
+      col,
+      ['Proceeds from (repayment of) bank loan', 'Advances to related corporations'],
+      rows => rows.map(row => excelRef(row, col)).join('+')
+    )
+    setFormulaIfRowsExist(
+      aoa,
+      cashMap,
+      'Increase (decrease) in cash',
+      col,
+      ['Cash provided by (used in) operating activities', 'Cash used in investing activities', 'Cash used for financing activities'],
+      rows => rows.map(row => excelRef(row, col)).join('+')
+    )
+
+    const beginningRow = cashMap.get('cash - beginning of year')
+    const endRow = cashMap.get('cash - end of year')
+    const increaseRow = cashMap.get('increase (decrease) in cash')
+    if (beginningRow !== undefined && endRow !== undefined) {
+      const existing = getCellNumber(aoa[beginningRow], col)
+      aoa[beginningRow][col] = formulaCell(priorCol !== undefined ? excelRef(endRow, priorCol) : '0', existing)
+    }
+    if (endRow !== undefined && beginningRow !== undefined && increaseRow !== undefined) {
+      const existing = getCellNumber(aoa[endRow], col)
+      aoa[endRow][col] = formulaCell(`${excelRef(beginningRow, col)}+${excelRef(increaseRow, col)}`, existing)
+    }
+  })
+}
+
 const DEFAULT_EXTRACTION_PROMPT =
   'Normalize the uploaded historical financial statements. Generate cash flow from the extracted balance sheet and income statement, and include vertical analysis, horizontal analysis, and EBITDA.'
 
@@ -286,6 +590,124 @@ function buildCombinedCSV(blocks: ContentBlock[]): string {
     if (index < blocks.length - 1) lines.push('', '')
   })
   return lines.join('\n')
+}
+
+async function downloadExcel(content: string) {
+  const XLSX = await import('xlsx')
+  const blocks = parseBlocks(content)
+  const aoa: WorkbookCell[][] = []
+  const sectionMaps = new Map<string, Map<string, number>>()
+  const sectionAmountCols = new Map<string, number[]>()
+  const sectionPercentCols = new Map<string, number[]>()
+  const sectionHorizontalCol = new Map<string, number | undefined>()
+  let currentHeading = ''
+
+  function pushBlankRows(count = 1) {
+    for (let i = 0; i < count; i++) aoa.push([])
+  }
+
+  for (const block of blocks) {
+    if (block.type === 'heading') {
+      currentHeading = block.text
+      aoa.push([currentHeading])
+      continue
+    }
+
+    if (block.type === 'text') {
+      for (const line of block.text.split('\n')) {
+        if (line.trim()) aoa.push([line.trim()])
+      }
+      continue
+    }
+
+    const isFinancialTable = [
+      'Income Statement',
+      'Balance Sheet',
+      'Cash Flow Statement (Computed from Balance Sheet and Income Statement)',
+      'EBITDA',
+    ].includes(currentHeading)
+    const header = block.rows[0] ?? []
+    const amountCols = header
+      .map((cell, index) => (/^\d{4}$/.test(cell.trim()) ? index : -1))
+      .filter(index => index >= 0)
+    const percentCols = header
+      .map((cell, index) => (cell.includes('Vertical') ? index : -1))
+      .filter(index => index >= 0)
+    const horizontalCol = header.findIndex(cell => cell.includes('Horizontal'))
+    const rowMap = new Map<string, number>()
+
+    block.rows.forEach((row, rowIndex) => {
+      const workbookRow: WorkbookCell[] = row.map((cell, colIndex) => {
+        const headerCell = header[colIndex] ?? ''
+        return rowIndex >= 3 || (!isFinancialTable && rowIndex > 0)
+          ? workbookValue(cell, headerCell)
+          : cell
+      })
+
+      if (isFinancialTable && rowIndex >= 3) {
+        const label = row[0] ?? ''
+        if (label) {
+          rowMap.set(normalizeAccount(label), aoa.length)
+        }
+      }
+
+      if (isFinancialTable && rowIndex === 0) workbookRow.push('Formula / Source')
+      if (isFinancialTable && rowIndex === 1) workbookRow.push('')
+      if (isFinancialTable && rowIndex === 2) workbookRow.push('')
+      if (isFinancialTable && rowIndex >= 3) {
+        const label = row[0] ?? ''
+        if (label) workbookRow.push(FORMULA_TEXT[normalizeAccount(label)] ?? 'Extracted from source statement')
+      }
+
+      aoa.push(workbookRow)
+    })
+
+    if (isFinancialTable) {
+      sectionMaps.set(currentHeading, rowMap)
+      sectionAmountCols.set(currentHeading, amountCols)
+      sectionPercentCols.set(currentHeading, percentCols)
+      sectionHorizontalCol.set(currentHeading, horizontalCol >= 0 ? horizontalCol : undefined)
+    }
+    pushBlankRows(2)
+  }
+
+  const incomeMap = sectionMaps.get('Income Statement')
+  if (incomeMap) {
+    applyStatementFormulas(
+      aoa,
+      incomeMap,
+      sectionAmountCols.get('Income Statement') ?? [],
+      sectionPercentCols.get('Income Statement') ?? [],
+      sectionHorizontalCol.get('Income Statement')
+    )
+  }
+
+  const balanceMap = sectionMaps.get('Balance Sheet')
+  if (balanceMap) {
+    applyBalanceFormulas(
+      aoa,
+      balanceMap,
+      sectionAmountCols.get('Balance Sheet') ?? [],
+      sectionPercentCols.get('Balance Sheet') ?? [],
+      sectionHorizontalCol.get('Balance Sheet')
+    )
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  ws['!cols'] = [
+    { wch: 42 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 22 },
+    { wch: 72 },
+  ]
+  ws['!freeze'] = { xSplit: 1, ySplit: 0 }
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Financial Output')
+  XLSX.writeFile(wb, 'financial_data.xlsx', { compression: true })
 }
 
 type ExtractionDiagnostics = {
@@ -316,66 +738,30 @@ function formatExtractionError(data: ExtractionErrorResponse) {
   ].join('\n')
 }
 
-function TableBlock({ rows, currency }: { rows: string[][]; currency: ReturnType<typeof detectCurrency> }) {
-  const [header, ...body] = rows
-  return (
-    <div className="overflow-x-auto rounded-lg border border-an-border">
-      <table className="w-full text-body-sm text-an-fg-base">
-        <thead>
-          <tr className="bg-an-bg-surface">
-            {header.map((h, i) => (
-              <th key={i} className="px-3 py-2 text-left text-label text-an-fg-subtle border-b border-an-border font-medium">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.map((row, i) => (
-            <tr key={i} className={i % 2 === 0 ? 'bg-an-bg-base' : 'bg-an-bg-subtle'}>
-              {row.map((cell, j) => (
-                <td key={j} className={`px-3 py-2 border-b border-an-border ${j > 0 ? 'text-right tabular-nums' : ''}`}>
-                  {formatFinancialTableCell(cell, rows, i + 1, j, currency)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 function ResponseContent({ content }: { content: string }) {
   const blocks = parseBlocks(content)
-  const currency = detectCurrency(content)
 
   return (
-    <div className="flex flex-col gap-6">
-      {blocks.map((block, i) => {
-        if (block.type === 'table') return <TableBlock key={i} rows={block.rows} currency={currency} />
-        if (block.type === 'heading') {
-          return (
-            <h3 key={i} className="text-title text-an-fg-base font-medium mt-2">
-              {block.text}
-            </h3>
-          )
-        }
-        return (
-          <p key={i} className="text-body text-an-fg-base whitespace-pre-wrap break-words">
-            {block.text}
-          </p>
-        )
-      })}
+    <div className="rounded-lg border border-an-border bg-an-bg-surface px-4 py-3">
       {blocks.length > 0 && (
-        <a
-          href={URL.createObjectURL(new Blob([buildCombinedCSV(blocks)], { type: 'text/csv' }))}
-          download="financial_data.csv"
-          className="self-start flex items-center gap-1.5 text-caption text-an-accent hover:underline"
-        >
-          <Download size={12} strokeWidth={1.5} />
-          Download all as CSV
-        </a>
+        <div className="flex flex-wrap items-center gap-3">
+          <a
+            href={URL.createObjectURL(new Blob([buildCombinedCSV(blocks)], { type: 'text/csv' }))}
+            download="financial_data.csv"
+            className="flex items-center gap-1.5 h-8 px-3 rounded border border-an-border text-body-sm text-an-fg-subtle hover:bg-an-bg-elevated hover:text-an-fg-base transition-colors"
+          >
+            <Download size={12} strokeWidth={1.5} />
+            Download CSV
+          </a>
+          <button
+            type="button"
+            onClick={() => downloadExcel(content)}
+            className="flex items-center gap-1.5 h-8 px-3 rounded bg-an-accent hover:bg-an-accent-hover text-white text-body-sm transition-colors"
+          >
+            <Download size={12} strokeWidth={1.5} />
+            Download Excel
+          </button>
+        </div>
       )}
     </div>
   )
@@ -391,7 +777,6 @@ export default function FinancialPage() {
   const [error, setError] = useState('')
   const [file, setFile] = useState<UploadedFile | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
-  const [creditState, setCreditState] = useState<Record<string, CreditState>>({})
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -570,74 +955,6 @@ export default function FinancialPage() {
     await sendMessage(message)
   }
 
-  function patchCreditState(id: string, patch: Partial<CreditState>) {
-    setCreditState(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }))
-  }
-
-  async function handleGeneratePdf(msg: Message) {
-    patchCreditState(msg.id, { generating: true, error: undefined })
-    try {
-      const { jsPDF } = await import('jspdf')
-      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
-      const margin = 40
-      const pageWidth = doc.internal.pageSize.getWidth()
-      const pageHeight = doc.internal.pageSize.getHeight()
-      const maxWidth = pageWidth - margin * 2
-      let y = margin
-
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(14)
-      doc.text('Financial Normalization Output', margin, y)
-      y += 22
-
-      doc.setFont('courier', 'normal')
-      doc.setFontSize(9)
-      const lineHeight = 12
-
-      for (const rawLine of msg.content.split('\n')) {
-        const wrapped: string[] = doc.splitTextToSize(rawLine || ' ', maxWidth)
-        for (const line of wrapped) {
-          if (y > pageHeight - margin) {
-            doc.addPage()
-            y = margin
-          }
-          doc.text(line, margin, y)
-          y += lineHeight
-        }
-      }
-
-      const blob = doc.output('blob')
-      const url = URL.createObjectURL(blob)
-      patchCreditState(msg.id, { pdfUrl: url, generating: false, showPreview: true })
-    } catch {
-      patchCreditState(msg.id, { generating: false, error: 'Failed to generate PDF.' })
-    }
-  }
-
-  function handleGoToCredit(msg: Message) {
-    localStorage.setItem('financial_output', msg.content)
-    router.push('/dashboard/credit')
-  }
-
-  async function handleSendToCredit(msg: Message) {
-    patchCreditState(msg.id, { sending: true, error: undefined })
-    try {
-      const res = await fetch('/api/credit-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ normalizedText: msg.content }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        patchCreditState(msg.id, { sending: false, error: data.error ?? 'Request failed.' })
-        return
-      }
-      patchCreditState(msg.id, { sending: false, summary: data.content })
-    } catch {
-      patchCreditState(msg.id, { sending: false, error: 'Something went wrong. Please try again.' })
-    }
-  }
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -739,63 +1056,7 @@ export default function FinancialPage() {
                     <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                   </div>
                 ) : (
-                  <>
-                    <ResponseContent content={msg.content} />
-                    <div className="mt-4 flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleGeneratePdf(msg)}
-                          disabled={creditState[msg.id]?.generating}
-                          className="flex items-center gap-1.5 h-7 px-2.5 rounded border border-an-border text-body-sm text-an-fg-subtle hover:bg-an-bg-elevated hover:text-an-fg-base transition-colors disabled:opacity-50"
-                        >
-                          <FileText size={12} strokeWidth={1.5} />
-                          {creditState[msg.id]?.generating
-                            ? 'Generating PDF…'
-                            : creditState[msg.id]?.pdfUrl
-                              ? 'Regenerate PDF'
-                              : 'Generate PDF'}
-                        </button>
-                        {creditState[msg.id]?.pdfUrl && (
-                          <>
-                            <a
-                              href={creditState[msg.id]?.pdfUrl}
-                              download="financial_normalization.pdf"
-                              className="flex items-center gap-1.5 text-caption text-an-accent hover:underline"
-                            >
-                              <Download size={12} strokeWidth={1.5} />
-                              Download PDF
-                            </a>
-                            <button
-                              onClick={() => patchCreditState(msg.id, { showPreview: !creditState[msg.id]?.showPreview })}
-                              className="flex items-center gap-1.5 text-caption text-an-fg-subtle hover:text-an-fg-base"
-                            >
-                              {creditState[msg.id]?.showPreview ? <EyeOff size={12} strokeWidth={1.5} /> : <Eye size={12} strokeWidth={1.5} />}
-                              {creditState[msg.id]?.showPreview ? 'Hide preview' : 'Preview PDF'}
-                            </button>
-                          </>
-                        )}
-                      </div>
-
-                      {creditState[msg.id]?.showPreview && creditState[msg.id]?.pdfUrl && (
-                        <iframe
-                          src={creditState[msg.id]?.pdfUrl}
-                          className="w-full h-72 rounded-lg border border-an-border"
-                        />
-                      )}
-
-                      <button
-                        onClick={() => handleGoToCredit(msg)}
-                        className="self-start flex items-center gap-1.5 h-7 px-3 rounded bg-an-accent hover:bg-an-accent-hover text-white text-label transition-colors"
-                      >
-                        <CreditCard size={12} strokeWidth={1.5} />
-                        Run credit readiness
-                      </button>
-
-                      {creditState[msg.id]?.error && (
-                        <p className="text-caption text-an-error">{creditState[msg.id]?.error}</p>
-                      )}
-                    </div>
-                  </>
+                  <ResponseContent content={msg.content} />
                 )}
               </div>
             </div>

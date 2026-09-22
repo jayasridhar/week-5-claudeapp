@@ -205,6 +205,28 @@ def decimal_to_string(value: Decimal | None, percent: bool = False) -> str:
     return f"{q:f}"
 
 
+def decimal_to_display(value: Decimal | None) -> str:
+    raw = decimal_to_string(value)
+    if raw == "":
+        return ""
+    try:
+        parsed = Decimal(raw)
+    except InvalidOperation:
+        return raw
+    sign = "-" if parsed < 0 else ""
+    absolute = abs(parsed)
+    if absolute == absolute.to_integral():
+        return f"{sign}{int(absolute):,}"
+    whole, fraction = f"{absolute.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):f}".split(".")
+    return f"{sign}{int(whole):,}.{fraction}"
+
+
+def currency_symbol(currency: str) -> str:
+    if currency == "INR":
+        return "₹"
+    return "$"
+
+
 def clean_label(label: str) -> str:
     label = re.sub(r"<[^>]+>", " ", label)
     label = re.sub(r"[*_`#]", "", label)
@@ -706,6 +728,7 @@ def build_statement_table(
     order: list[str],
     selected_years: list[int],
     vertical_base_label: str,
+    currency: str,
 ) -> list[list[str]]:
     latest = selected_years[0] if selected_years else None
     prior = selected_years[1] if len(selected_years) > 1 else None
@@ -714,7 +737,11 @@ def build_statement_table(
     if latest and prior:
         header.append(f"Horizontal {latest} vs {prior} %")
 
-    output = [header]
+    output = [
+        header,
+        ["", *["Full year" for _ in selected_years], *["" for _ in selected_years], *["" for _ in ([1] if latest and prior else [])]],
+        ["", *[currency_symbol(currency) for _ in selected_years], *["%" for _ in selected_years], *["%" for _ in ([1] if latest and prior else [])]],
+    ]
     for label in order:
         row = rows.get(label)
         if not row:
@@ -738,7 +765,7 @@ def build_statement_table(
         else:
             base_label = vertical_base_label
         verticals = [pct(row.values.get(year), get_value(rows, base_label, year)) for year in selected_years]
-        out_row = [label, *[decimal_to_string(v) for v in values], *[decimal_to_string(v, percent=True) for v in verticals]]
+        out_row = [label, *[decimal_to_display(v) for v in values], *[decimal_to_string(v, percent=True) for v in verticals]]
         if latest and prior:
             out_row.append(decimal_to_string(yoy(row.values.get(latest), row.values.get(prior)), percent=True))
         output.append(out_row)
@@ -815,7 +842,11 @@ def build_cash_flow(parsed: ParsedFinancials, selected_years: list[int]) -> list
         rows["Increase (decrease) in cash"][year] = increase
         rows["Cash - End of year"][year] = (rows["Cash - Beginning of year"].get(year) or Decimal("0")) + increase
 
-    output = [header]
+    output = [
+        header,
+        ["", *["Full year" for _ in selected_years]],
+        ["", *[currency_symbol(parsed.currency) for _ in selected_years]],
+    ]
     for label in CASH_FLOW_ORDER:
         values = [rows[label].get(year) for year in selected_years]
         if any(value is not None and value != 0 for value in values) or label in {
@@ -826,7 +857,7 @@ def build_cash_flow(parsed: ParsedFinancials, selected_years: list[int]) -> list
             "Cash - Beginning of year",
             "Cash - End of year",
         }:
-            output.append([label, *[decimal_to_string(v) for v in values]])
+            output.append([label, *[decimal_to_display(v) for v in values]])
     return output
 
 
@@ -891,13 +922,13 @@ def build_content(parsed: ParsedFinancials) -> str:
         )
         return "\n\n".join(sections)
 
-    income_table = build_statement_table(parsed.income, INCOME_ORDER, selected_years, "Gross Revenue")
+    income_table = build_statement_table(parsed.income, INCOME_ORDER, selected_years, "Gross Revenue", parsed.currency)
     if len(income_table) > 1:
         sections.append("### Income Statement\n" + table_to_csv(income_table))
     else:
         parsed.warnings.append("Income Statement was not parsed from the extracted text.")
 
-    balance_table = build_statement_table(parsed.balance, BALANCE_ORDER, selected_years, "__balance_sheet__")
+    balance_table = build_statement_table(parsed.balance, BALANCE_ORDER, selected_years, "__balance_sheet__", parsed.currency)
     if len(balance_table) > 1:
         sections.append("### Balance Sheet\n" + table_to_csv(balance_table))
     else:
@@ -909,7 +940,12 @@ def build_content(parsed: ParsedFinancials) -> str:
         parsed.warnings.append("Cash Flow Statement cannot be computed because a parsed Income Statement and Balance Sheet are both required.")
 
     if "EBITDA" in parsed.income:
-        ebitda_rows = [["Account", *[str(y) for y in selected_years]], ["EBITDA", *[decimal_to_string(get_value(parsed.income, "EBITDA", y)) for y in selected_years]]]
+        ebitda_rows = [
+            ["Account", *[str(y) for y in selected_years]],
+            ["", *["Full year" for _ in selected_years]],
+            ["", *[currency_symbol(parsed.currency) for _ in selected_years]],
+            ["EBITDA", *[decimal_to_display(get_value(parsed.income, "EBITDA", y)) for y in selected_years]],
+        ]
         sections.append("### EBITDA\n" + table_to_csv(ebitda_rows))
 
     sections.append("### Calculation Formulas\n" + table_to_csv(build_formula_table(selected_years)))
