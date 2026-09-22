@@ -45,7 +45,26 @@ function isSeparatorLine(line: string): boolean {
 function splitFields(line: string, delim: ',' | '|' | '\t'): string[] {
   if (delim === '|') return line.replace(/^\s*\||\|\s*$/g, '').split('|').map(c => c.trim())
   if (delim === '\t') return line.split('\t').map(c => c.trim())
-  return line.split(',').map(c => c.trim())
+  const fields: string[] = []
+  let field = ''
+  let quoted = false
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    const next = line[i + 1]
+    if (char === '"' && quoted && next === '"') {
+      field += '"'
+      i++
+    } else if (char === '"') {
+      quoted = !quoted
+    } else if (char === ',' && !quoted) {
+      fields.push(field.trim())
+      field = ''
+    } else {
+      field += char
+    }
+  }
+  fields.push(field.trim())
+  return fields
 }
 
 function detectDelimiter(line: string): ',' | '|' | '\t' | null {
@@ -96,7 +115,7 @@ function stripThousandsSeparators(content: string): string {
 // blocks, instead of grabbing only the first table-like section and dropping
 // every other section (CSV blocks, prose, multiple tables) that follows it.
 function parseBlocks(rawContent: string): ContentBlock[] {
-  const content = stripThousandsSeparators(rawContent)
+  const content = rawContent
   const lines = content.split('\n')
   const blocks: ContentBlock[] = []
   let textBuffer: string[] = []
@@ -250,18 +269,13 @@ function tableToCSV(rows: string[][]): string {
 }
 
 const DEFAULT_EXTRACTION_PROMPT =
-  'Extract only the financial data present in the uploaded document and produce raw CSV outputs ' +
-  'for the Balance Sheet, Income Statement, Statement of Retained Earnings, and Cash Flow Statement. ' +
-  'If the Cash Flow Statement is not present, compute it only from the uploaded Balance Sheet and Income ' +
-  'Statement values when the required source values are available. Do not estimate, infer, project, or invent ' +
-  'missing values. If the file cannot be parsed or a statement cannot be extracted or computed from provided data, ' +
-  'clearly say it cannot be parsed, was not provided, or cannot be computed.'
+  'Normalize the uploaded historical financial statements. Generate cash flow from the extracted balance sheet and income statement, and include vertical analysis, horizontal analysis, and EBITDA.'
 
 // Dumps the entire response into one CSV, in document order: headings and
 // narrative text become single-column rows, tables become multi-column rows.
 function buildCombinedCSV(blocks: ContentBlock[]): string {
   const lines: string[] = []
-  for (const block of blocks) {
+  blocks.forEach((block, index) => {
     if (block.type === 'table') {
       lines.push(tableToCSV(block.rows))
     } else {
@@ -269,7 +283,8 @@ function buildCombinedCSV(blocks: ContentBlock[]): string {
         if (line.trim()) lines.push(`"${line.trim().replace(/"/g, '""')}"`)
       }
     }
-  }
+    if (index < blocks.length - 1) lines.push('', '')
+  })
   return lines.join('\n')
 }
 
@@ -336,7 +351,7 @@ function ResponseContent({ content }: { content: string }) {
   const currency = detectCurrency(content)
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       {blocks.map((block, i) => {
         if (block.type === 'table') return <TableBlock key={i} rows={block.rows} currency={currency} />
         if (block.type === 'heading') {
@@ -512,7 +527,7 @@ export default function FinancialPage() {
     setLoading(true)
 
     try {
-      const res = await fetch('/api/financial-chat', {
+      const res = await fetch('/api/normalize-financials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -701,7 +716,7 @@ export default function FinancialPage() {
               </div>
               <p className="text-title text-an-fg-base mb-2">Financial Normalization Agent</p>
               <p className="text-body text-an-fg-subtle max-w-sm">
-                Upload a financial document (PDF, Excel, CSV) and ask questions to normalize and analyse the data.
+                Upload a financial document (PDF, Excel, CSV) to normalize historical statements, computed cash flow, vertical analysis, horizontal analysis, and EBITDA.
               </p>
             </div>
           )}
@@ -836,7 +851,7 @@ export default function FinancialPage() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-              placeholder="Ask about the financial data…"
+              placeholder="Add an instruction for this normalization…"
               rows={1}
               disabled={loading}
               className="w-full bg-transparent border-none text-body text-an-fg-base placeholder:text-an-fg-muted resize-none focus:outline-none disabled:opacity-50 min-h-[24px] max-h-[200px] overflow-y-auto"
