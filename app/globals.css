@@ -6,22 +6,22 @@
 
 /* Light mode — default (all pages) */
 :root {
-  --an-bg-base:       #FAF9F7;
-  --an-bg-subtle:     #F2F0EC;
-  --an-bg-surface:    #ECEAE5;
-  --an-bg-elevated:   #E4E2DC;
-  --an-border-base:   rgba(0, 0, 0, 0.08);
-  --an-border-strong: rgba(0, 0, 0, 0.18);
-  --an-fg-base:       #1A1917;
-  --an-fg-subtle:     #6B6864;
-  --an-fg-muted:      #9B9793;
+  --an-bg-base:       #F6FBFF;
+  --an-bg-subtle:     #EAF4FB;
+  --an-bg-surface:    #FFFFFF;
+  --an-bg-elevated:   #DCECF7;
+  --an-border-base:   rgba(20, 83, 128, 0.14);
+  --an-border-strong: rgba(20, 83, 128, 0.28);
+  --an-fg-base:       #102A43;
+  --an-fg-subtle:     #486581;
+  --an-fg-muted:      #829AB1;
   --an-fg-inverted:   #FAF9F7;
-  --an-accent:        #D97757;
-  --an-accent-hover:  #C96B49;
-  --an-accent-subtle: rgba(217, 119, 87, 0.12);
-  --an-success:       #5B9B6B;
-  --an-warning:       #C9963A;
-  --an-error:         #C05B5B;
+  --an-accent:        #1F6F9E;
+  --an-accent-hover:  #175C85;
+  --an-accent-subtle: rgba(31, 111, 158, 0.12);
+  --an-success:       #2F8F6B;
+  --an-warning:       #B7791F;
+  --an-error:         #B42318;
 }
 
 * {

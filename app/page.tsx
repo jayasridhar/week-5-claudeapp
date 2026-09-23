@@ -40,9 +40,6 @@ export default function LandingPage() {
 
       {/* Hero */}
       <section className="max-w-6xl mx-auto px-6 pt-24 pb-20 text-center">
-        <div className="inline-flex items-center gap-2 bg-an-accent-subtle text-an-accent text-label px-3 py-1 rounded-full mb-8">
-          Powered by Azure AI
-        </div>
         <h1 className="font-display text-[52px] font-semibold leading-[1.15] text-an-fg-base mb-6 max-w-3xl mx-auto">
           Financial intelligence for capital decisions
         </h1>

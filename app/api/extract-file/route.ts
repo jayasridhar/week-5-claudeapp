@@ -8,6 +8,7 @@ import {
   MAX_PDF_PAGES,
   MAX_UPLOAD_BYTES,
   formatBytes,
+  validatePdfPageRange,
 } from '@/lib/usage-limits'
 
 const API_VERSION = '2024-11-30'
@@ -83,13 +84,17 @@ async function estimatePdfPageCount(file: File) {
   return (raw.match(/\/Type\s*\/Page\b/g) ?? []).length
 }
 
-async function analyzeDocument(file: File) {
+async function analyzeDocument(file: File, pageRange = '') {
   const { endpoint, key } = getDocumentIntelligenceConfig()
   const bytes = Buffer.from(await file.arrayBuffer())
   const base64Source = bytes.toString('base64')
-  const analyzeUrl =
-    `${endpoint}/documentintelligence/documentModels/${MODEL_ID}:analyze` +
-    `?_overload=analyzeDocument&api-version=${API_VERSION}&outputContentFormat=markdown`
+  const analyzeParams = new URLSearchParams({
+    _overload: 'analyzeDocument',
+    'api-version': API_VERSION,
+    outputContentFormat: 'markdown',
+  })
+  if (pageRange) analyzeParams.set('pages', pageRange)
+  const analyzeUrl = `${endpoint}/documentintelligence/documentModels/${MODEL_ID}:analyze?${analyzeParams}`
 
   const analyzeResponse = await fetch(analyzeUrl, {
     method: 'POST',
@@ -150,6 +155,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     const file = formData.get('file')
     const userId = formData.get('userId')
+    const requestedPageRange = formData.get('pageRange')
 
     if (typeof userId !== 'string' || !userId) {
       return NextResponse.json({ error: 'Login is required before extracting a PDF.' }, { status: 401 })
@@ -177,14 +183,20 @@ export async function POST(req: NextRequest) {
     }
 
     const estimatedPageCount = await estimatePdfPageCount(file)
-    if (estimatedPageCount > MAX_PDF_PAGES) {
+    const pageRange = typeof requestedPageRange === 'string' ? requestedPageRange : ''
+    const pageRangeValidation = validatePdfPageRange(pageRange, estimatedPageCount || undefined)
+    if (pageRangeValidation.error) {
+      return NextResponse.json({ error: pageRangeValidation.error }, { status: 400 })
+    }
+
+    if (!pageRangeValidation.normalized && estimatedPageCount > MAX_PDF_PAGES) {
       return NextResponse.json(
-        { error: `PDF has ${estimatedPageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.` },
+        { error: `PDF has ${estimatedPageCount} pages. Enter a page range of up to ${MAX_PDF_PAGES} pages, or upload a shorter PDF.` },
         { status: 413 }
       )
     }
 
-    const result = await analyzeDocument(file)
+    const result = await analyzeDocument(file, pageRangeValidation.normalized)
     if (!result.content.trim()) {
       return NextResponse.json(
         { error: 'No readable text or tables were extracted from this PDF.' },
@@ -198,7 +210,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const warning = result.pageCount === 2
+    const warning = result.pageCount === 2 && !pageRangeValidation.normalized && estimatedPageCount > 2
       ? 'Only 2 pages were extracted. If this PDF has more pages, check whether Azure Document Intelligence is using the Free (F0) tier, which processes only the first two pages.'
       : undefined
 
@@ -206,6 +218,8 @@ export async function POST(req: NextRequest) {
       text: result.content,
       operationId: result.operationId,
       pageCount: result.pageCount,
+      totalPageCount: estimatedPageCount,
+      pageRange: pageRangeValidation.normalized,
       tableCount: result.tableCount,
       warning,
     })

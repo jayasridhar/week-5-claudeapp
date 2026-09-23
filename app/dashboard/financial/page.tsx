@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Upload, X, Send, Download, FileText, History } from 'lucide-react'
-import { formatBytes, MAX_PDF_PAGES, MAX_UPLOAD_BYTES } from '@/lib/usage-limits'
+import { formatBytes, MAX_PDF_PAGES, MAX_UPLOAD_BYTES, validatePdfPageRange } from '@/lib/usage-limits'
 
 type Message = {
   role: 'user' | 'assistant'
@@ -13,6 +13,8 @@ type Message = {
 
 type ExtractionMeta = {
   pageCount?: number
+  totalPageCount?: number
+  pageRange?: string
   tableCount?: number
   warning?: string
 }
@@ -322,13 +324,14 @@ function formulaCell(formula: string, value: number | null, isPercent = false): 
 }
 
 const FORMULA_TEXT: Record<string, string> = {
+  'gross revenue': 'Cost of Sales + Gross Margin when Gross Revenue is not provided',
   'cost of sales': 'Materials + Labour + Variable Costs + Fixed Costs when Cost of Sales is not provided',
   'gross margin': 'Gross Revenue - Cost of Sales',
   'operating costs': 'Logistics + SG&A + Depreciation + Interest when Operating Costs is not provided',
   'operating income': 'Gross Margin - Operating Costs',
   'net income': 'Operating Income - Corporate Tax when Net Income is not provided; otherwise extracted from source',
   ebitda: 'Net Income + Interest + Depreciation + Corporate Tax',
-  'total assets': 'Cash + Accounts receivable + Inventory + Prepaids and deposits + Property and equipment + Due from related parties when Total Assets is not provided',
+  'total assets': 'Cash + Accounts receivable + Inventory + Prepaids and deposits + Property and equipment + Due from related parties + Other assets when Total Assets is not provided',
   'total liabilities': 'Bank indebtedness + Accounts payable + Income taxes payable + Short-term loans + Due to related parties + CEBA loan + Long-term loans when Total Liabilities is not provided',
   'shareholder equity': 'Common Shares + Retained Earnings when Shareholder Equity is not provided',
   'tl + se': 'Total Liabilities + Shareholder Equity',
@@ -409,7 +412,7 @@ function applyBalanceFormulas(
   percentCols: number[],
   horizontalCol?: number
 ) {
-  const assetLabels = ['Cash', 'Accounts receivable (net)', 'Inventory', 'Prepaid Expenses & Deposits', 'Property & Equipment', 'Due from Related Parties']
+  const assetLabels = ['Cash', 'Accounts receivable (net)', 'Inventory', 'Prepaid Expenses & Deposits', 'Property & Equipment', 'Due from Related Parties', 'Other Assets']
   const liabilityLabels = ['Bank Indebtedness', 'Accounts Payable & Accrued Liabilities', 'Income taxes payable', 'Short-term Loans', 'Due to related parties', 'CEBA Loan payable', 'Long-term Loans']
 
   amountCols.forEach(col => {
@@ -777,6 +780,7 @@ export default function FinancialPage() {
   const [error, setError] = useState('')
   const [file, setFile] = useState<UploadedFile | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
+  const [pdfPageRange, setPdfPageRange] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -832,14 +836,21 @@ export default function FinancialPage() {
         const pageCount = pdf.numPages
         await pdf.destroy()
 
-        if (pageCount > MAX_PDF_PAGES) {
-          setError(`PDF has ${pageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.`)
+        const pageRangeValidation = validatePdfPageRange(pdfPageRange, pageCount)
+        if (pageRangeValidation.error) {
+          setError(pageRangeValidation.error)
+          return
+        }
+
+        if (!pageRangeValidation.normalized && pageCount > MAX_PDF_PAGES) {
+          setError(`PDF has ${pageCount} pages. Enter a page range of up to ${MAX_PDF_PAGES} pages, or upload a shorter PDF.`)
           return
         }
 
         const formData = new FormData()
         formData.append('file', f)
         formData.append('userId', userId)
+        if (pageRangeValidation.normalized) formData.append('pageRange', pageRangeValidation.normalized)
 
         const extractionRes = await fetch('/api/extract-file', {
           method: 'POST',
@@ -855,6 +866,8 @@ export default function FinancialPage() {
         text = extractionData.text ?? ''
         meta = {
           pageCount: extractionData.pageCount,
+          totalPageCount: extractionData.totalPageCount,
+          pageRange: extractionData.pageRange,
           tableCount: extractionData.tableCount,
           warning: extractionData.warning,
         }
@@ -887,7 +900,7 @@ export default function FinancialPage() {
 
       setFile({ name, text, meta })
       const displayMessage = meta
-        ? `Analyze ${name} (${meta.pageCount ?? 0} pages extracted, ${meta.tableCount ?? 0} tables found)`
+        ? `Analyze ${name} (${meta.pageRange ? `pages ${meta.pageRange}, ` : ''}${meta.pageCount ?? 0} pages extracted, ${meta.tableCount ?? 0} tables found)`
         : `Analyze ${name}`
       await sendMessage(DEFAULT_EXTRACTION_PROMPT, {
         fileOverride: { name, text, meta },
@@ -1086,7 +1099,9 @@ export default function FinancialPage() {
                 {file.name}
                 {file.meta && (
                   <span className="text-caption text-an-fg-muted">
-                    {file.meta.pageCount ?? 0} pages · {file.meta.tableCount ?? 0} tables
+                    {file.meta.pageRange ? `pages ${file.meta.pageRange} · ` : ''}
+                    {file.meta.pageCount ?? 0}
+                    {file.meta.totalPageCount ? `/${file.meta.totalPageCount}` : ''} pages · {file.meta.tableCount ?? 0} tables
                   </span>
                 )}
                 <button onClick={() => setFile(null)} className="text-an-fg-muted hover:text-an-fg-base transition-colors">
@@ -1117,8 +1132,29 @@ export default function FinancialPage() {
               disabled={loading}
               className="w-full bg-transparent border-none text-body text-an-fg-base placeholder:text-an-fg-muted resize-none focus:outline-none disabled:opacity-50 min-h-[24px] max-h-[200px] overflow-y-auto"
             />
-            <div className="flex items-center justify-between mt-2">
-              <div className="flex items-center gap-2">
+            <div className="mt-3 rounded-lg border border-an-border bg-an-bg-subtle/70 px-3 py-2.5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <label htmlFor="pdf-page-range" className="text-caption font-medium text-an-fg-base">
+                    Optional PDF pages
+                  </label>
+                  <p className="mt-0.5 text-caption text-an-fg-subtle">
+                    Enter pages before uploading if you only want part of a PDF processed. Leave blank to use the whole file when it is within the limit.
+                  </p>
+                </div>
+                <input
+                  id="pdf-page-range"
+                  value={pdfPageRange}
+                  onChange={e => setPdfPageRange(e.target.value)}
+                  disabled={fileLoading}
+                  placeholder="1-8"
+                  className="h-8 w-full rounded border border-an-border bg-an-bg-surface px-3 text-body-sm text-an-fg-base placeholder:text-an-fg-muted focus:outline-none focus:border-an-accent disabled:opacity-50 sm:w-32"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between mt-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1134,7 +1170,7 @@ export default function FinancialPage() {
                   <Upload size={12} strokeWidth={1.5} />
                   {fileLoading ? 'Reading…' : 'Upload file'}
                 </button>
-                <span className="text-caption text-an-fg-muted">PDF, Excel, CSV, JSON, TXT · {formatBytes(MAX_UPLOAD_BYTES)} max · {MAX_PDF_PAGES} PDF pages</span>
+                <span className="text-caption text-an-fg-muted">PDF, Excel, CSV, JSON, TXT · {formatBytes(MAX_UPLOAD_BYTES)} max · {MAX_PDF_PAGES} extracted PDF pages</span>
               </div>
               <button
                 onClick={handleSend}

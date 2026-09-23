@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:normalizer": "python3 scripts/test_financial_normalizer.py"
   },
   "dependencies": {
     "@azure/identity": "^4.13.1",

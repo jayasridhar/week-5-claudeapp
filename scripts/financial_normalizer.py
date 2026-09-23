@@ -19,12 +19,13 @@ from typing import Iterable
 
 
 MONEY_RE = re.compile(r"\(?-?\$?\s*\d[\d,]*(?:\.\d+)?\)?")
+VALUE_RE = re.compile(r"\(?-?\$?\s*\d[\d,]*(?:\.\d+)?\)?|(?<!\w)[—–-](?!\w)")
 YEAR_RE = re.compile(r"\b(20\d{2}|19\d{2})\b")
 
 
 INCOME_MAP: list[tuple[str, str]] = [
     ("Cost of Sales", r"\b(cost\s+of\s+sales|cost\s+of\s+goods\s+sold|cogs|purchases?,?\s+packaging\s+and\s+printing)\b"),
-    ("Gross Revenue", r"\b(gross\s+revenue|net\s+sales|sales|revenue|total\s+revenue)\b"),
+    ("Gross Revenue", r"\b(gross\s+revenue|net\s+sales|sales|revenue|total\s+(revenue|income))\b"),
     ("Materials", r"\b(materials?|purchases?|cost\s+of\s+goods|cogs)\b"),
     ("Labour", r"\b(labou?r|wages?|salar(?:y|ies)|payroll)\b"),
     ("Variable Costs", r"\b(variable\s+costs?|direct\s+costs?)\b"),
@@ -48,7 +49,8 @@ ASSET_MAP: list[tuple[str, str]] = [
     ("Inventory", r"\b(inventor(?:y|ies))\b"),
     ("Prepaid Expenses & Deposits", r"\b(prepaid|deposits?|sundry\s+receivable)\b"),
     ("Property & Equipment", r"\b(property|equipment|fixed\s+assets?|capital\s+assets?|leasehold|property,\s*plant\s+and\s+equipment)\b"),
-    ("Due from Related Parties", r"\b(due\s+from\s+related|receivable\s+from\s+related)\b"),
+    ("Due from Related Parties", r"\b(due\s+from\s+(related|shareholder)|receivable\s+from\s+(related|shareholder))\b"),
+    ("Other Assets", r"\b(harmonized\s+sales\s+tax\s+recoverable|hst\s+recoverable|sales\s+tax\s+recoverable|incorporation\s+costs?)\b"),
     ("Total Assets", r"\b(total\s+assets?)\b"),
 ]
 
@@ -60,7 +62,7 @@ LIABILITY_MAP: list[tuple[str, str]] = [
     ("Due to related parties", r"\b(due\s+to\s+related|payable\s+to\s+related|shareholder\s+loan|loan\s+payable\s+-\s+related\s+party|advances?\s+from\s+shareholder)\b"),
     ("CEBA Loan payable", r"\b(ceba)\b"),
     ("Long-term Loans", r"\b(long[\s-]?term\s+loans?|long[\s-]?term\s+debt|loan\s+payable)\b"),
-    ("TL + SE", r"\b(total\s+liabilit(?:y|ies)\s+(and|&)\s+shareholder(?:s|['’]s|s['’])?\s+equity)\b"),
+    ("TL + SE", r"\b(total\s+liabilit(?:y|ies)\s+(and|&)\s+(shareholder(?:s|['’]s|s['’])?\s+)?equity)\b"),
     ("Total Liabilities", r"\b(total\s+liabilit(?:y|ies))\b"),
     ("Common Shares", r"\b(common\s+shares?|share\s+capital|capital\s+stock)\b"),
     ("Retained Earnings", r"\b(retained\s+earnings|deficit)\b"),
@@ -75,6 +77,7 @@ AGGREGATE_LABELS = {
     "Logistics",
     "SG&A",
     "Prepaid Expenses & Deposits",
+    "Other Assets",
     "Accounts Payable & Accrued Liabilities",
     "Due to related parties",
     "Long-term Loans",
@@ -122,6 +125,7 @@ BALANCE_ORDER = [
     "Prepaid Expenses & Deposits",
     "Property & Equipment",
     "Due from Related Parties",
+    "Other Assets",
     "Total Assets",
     "Bank Indebtedness",
     "Accounts Payable & Accrued Liabilities",
@@ -177,8 +181,10 @@ class ParsedFinancials:
 
 def parse_decimal(raw: str) -> Decimal | None:
     value = raw.strip()
-    if not value or value in {"-", "—", "–"}:
+    if not value:
         return None
+    if value in {"-", "—", "–"}:
+        return Decimal("0")
     is_negative = value.startswith("(") and value.endswith(")")
     value = re.sub(r"(?i)\b(cad|cdn|usd|inr|rs\.?)\b", "", value)
     value = value.replace("$", "").replace(",", "").replace("%", "").replace("(", "").replace(")", "").strip()
@@ -257,15 +263,70 @@ def detect_unit(text: str, currency: str) -> str:
 
 
 def detect_company_name(text: str, file_name: str) -> str:
+    recent_logo_lines: list[str] = []
+    for line in text.splitlines()[:80]:
+        heading_match = re.match(r"^#{1,3}\s+(.+)$", line.strip())
+        if not heading_match:
+            continue
+        cleaned = clean_label(heading_match.group(1))
+        if not cleaned or len(cleaned) > 90:
+            continue
+        if re.search(r"\b(statement|balance|income|cash|assets|liabilities|unaudited|compiled|report|table\s+of\s+contents)\b", cleaned, re.I):
+            continue
+        if re.search(r"\b(inc\.?|corp\.?|corporation|ltd\.?|limited|company|co\.?)\b", cleaned, re.I):
+            return clean_company_heading(cleaned)
+
     for line in text.splitlines()[:80]:
         cleaned = clean_label(line)
         if not cleaned or len(cleaned) > 90:
             continue
         if re.search(r"\b(statement|balance|income|cash|assets|liabilities|unaudited|compiled|report)\b", cleaned, re.I):
             continue
+        if (
+            re.search(r"\b(inc\.?|corp\.?|corporation|ltd\.?|limited|company|co\.?)\b", cleaned, re.I)
+            and cleaned.isupper()
+            and recent_logo_lines
+        ):
+            prefix = clean_label(recent_logo_lines[-1])
+            if prefix and not re.search(r"\b(statement|balance|income|cash|assets|liabilities|unaudited|compiled|report)\b", prefix, re.I):
+                return title_company_name(f"{prefix} {cleaned}")
         if re.search(r"\b(inc\.?|corp\.?|corporation|ltd\.?|limited|company|co\.?)\b", cleaned, re.I):
-            return cleaned
+            return clean_company_heading(cleaned)
+        if cleaned.isupper() and re.search(r"[A-Z]{3,}", cleaned):
+            recent_logo_lines.append(cleaned)
+            recent_logo_lines = recent_logo_lines[-3:]
     return re.sub(r"\.[^.]+$", "", file_name).strip() or "Unknown"
+
+
+def clean_company_heading(name: str) -> str:
+    name = re.sub(
+        r"\s+\b(financial\s+information|financial\s+statements?|compiled\s+financial\s+information)\b.*$",
+        "",
+        name,
+        flags=re.I,
+    )
+    return clean_label(name)
+
+
+def title_company_name(name: str) -> str:
+    words = re.sub(r"\s+", " ", name).strip().split()
+    titled: list[str] = []
+    for word in words:
+        bare = word.strip(".,")
+        suffix = word[len(bare):]
+        if re.fullmatch(r"(?i)inc", bare):
+            titled.append("Inc." if suffix == "." else "Inc" + suffix)
+        elif re.fullmatch(r"(?i)ltd", bare):
+            titled.append("Ltd." if suffix == "." else "Ltd" + suffix)
+        elif re.fullmatch(r"(?i)corp", bare):
+            titled.append("Corp." if suffix == "." else "Corp" + suffix)
+        elif re.fullmatch(r"(?i)co", bare):
+            titled.append("Co." if suffix == "." else "Co" + suffix)
+        elif bare.upper() == "LIONSGATE":
+            titled.extend(["Lions", "Gate"])
+        else:
+            titled.append(bare[:1].upper() + bare[1:].lower() + suffix)
+    return " ".join(titled)
 
 
 def html_tables_to_tab_rows(text: str) -> str:
@@ -308,6 +369,11 @@ def split_row(line: str) -> list[str] | None:
         except csv.Error:
             return None
         cells = [c.strip() for c in cells]
+        if len(cells) >= 2 and MONEY_RE.search(stripped) and any(
+            re.search(r"\d\s+\$?\s*\d", cell) or re.search(r"\$\s*\d", cell)
+            for cell in cells
+        ):
+            return None
         if cells and MONEY_RE.search(cells[0]):
             return None
         if len(cells) >= 2:
@@ -315,12 +381,100 @@ def split_row(line: str) -> list[str] | None:
     return None
 
 
+def comparative_years_from_line(line: str) -> dict[int, int]:
+    months = r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+    fiscal_range_years = [
+        int(match.group(1))
+        for match in re.finditer(
+            rf"\b(?:{months})\.?\s+\d{{4}}\s*[-–]\s*(?:{months})\.?\s+(\d{{4}})",
+            line,
+            re.I,
+        )
+    ]
+    if len(fiscal_range_years) >= 2:
+        return {idx + 1: year for idx, year in enumerate(fiscal_range_years[:2])}
+
+    years: list[int] = []
+    for year in reversed([int(match) for match in YEAR_RE.findall(line)]):
+        if year not in years:
+            years.append(year)
+        if len(years) == 2:
+            break
+    if len(years) < 2:
+        return {}
+    return {idx + 1: year for idx, year in enumerate(reversed(years))}
+
+
+def is_statement_year_header(line: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(balance\s+sheet|statement\s+of|year\s+ended|as\s+(at|of)|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+            line,
+            re.I,
+        )
+    )
+
+
+def sequential_values_from_cells(cells: list[str], label_index: int, years: dict[int, int]) -> dict[int, Decimal]:
+    ordered_years = [year for _, year in sorted(years.items())]
+    if not ordered_years:
+        return {}
+
+    values: list[Decimal] = []
+    for cell in cells[label_index + 1:]:
+        raw = cell.strip()
+        if raw in {"-", "—", "–"}:
+            values.append(Decimal("0"))
+            continue
+        cleaned = clean_label(cell)
+        if not cleaned or cleaned in {"$", "CAD", "USD", "INR"} or YEAR_RE.fullmatch(cleaned):
+            continue
+        parsed = parse_decimal(raw)
+        if parsed is not None:
+            values.append(parsed)
+
+    if len(values) < min(2, len(ordered_years)):
+        return {}
+    return {
+        year: value
+        for year, value in zip(ordered_years, values)
+    }
+
+
+def looks_like_note_reference(cells: list[str], label_index: int) -> bool:
+    if label_index + 2 >= len(cells):
+        return False
+    note_candidate = clean_label(cells[label_index + 1])
+    following_value = parse_decimal(cells[label_index + 2])
+    if not re.fullmatch(r"\d{1,3}", note_candidate) or following_value is None:
+        return False
+    note_number = int(note_candidate)
+    return 100 <= note_number <= 999
+
+
+def fill_empty_amount_cells_as_zero(
+    values: dict[int, Decimal],
+    cells: list[str],
+    years: dict[int, int],
+    label_index: int,
+) -> dict[int, Decimal]:
+    if not values:
+        return values
+    filled = dict(values)
+    for idx, year in years.items():
+        if year in filled or idx >= len(cells) or idx <= label_index:
+            continue
+        if clean_label(cells[idx]) == "":
+            filled[year] = Decimal("0")
+    return filled
+
+
 def split_loose_financial_line(line: str, current_years: dict[int, int]) -> tuple[str, dict[int, Decimal]] | None:
     if not current_years:
         return None
     if line.lstrip().startswith("#") or re.search(r"\b(as at|for the year ended|statement of|pagefooter|pagenumber)\b", line, re.I):
         return None
-    matches = list(MONEY_RE.finditer(line))
+    matches = [match for match in VALUE_RE.finditer(line) if match.group(0).strip()]
     ordered_years = [year for _, year in sorted(current_years.items())]
     if len(matches) < min(2, len(ordered_years)):
         return None
@@ -331,7 +485,8 @@ def split_loose_financial_line(line: str, current_years: dict[int, int]) -> tupl
 
     values: dict[int, Decimal] = {}
     for year, match in zip(ordered_years, matches[: len(ordered_years)]):
-        value = parse_decimal(match.group(0))
+        raw_value = match.group(0).strip()
+        value = Decimal("0") if raw_value in {"-", "—", "–"} else parse_decimal(raw_value)
         if value is not None:
             values[year] = value
 
@@ -341,9 +496,9 @@ def split_loose_financial_line(line: str, current_years: dict[int, int]) -> tupl
 def row_years(cells: list[str]) -> dict[int, int]:
     years: dict[int, int] = {}
     for idx, cell in enumerate(cells):
-        match = YEAR_RE.search(cell)
-        if match:
-            years[idx] = int(match.group(1))
+        matches = YEAR_RE.findall(cell)
+        if matches:
+            years[idx] = int(matches[-1])
     return years
 
 
@@ -353,6 +508,11 @@ def is_year_header_row(cells: list[str]) -> bool:
         YEAR_RE.fullmatch(cell) or cell in {"$", "CAD", "USD", "INR"}
         for cell in nonempty
     )
+
+
+def is_period_header_row(cells: list[str]) -> bool:
+    nonempty = [clean_label(cell) for cell in cells if clean_label(cell)]
+    return bool(nonempty) and all(YEAR_RE.search(cell) for cell in nonempty)
 
 
 def statement_years(cells: list[str], years: dict[int, int]) -> dict[int, int]:
@@ -367,9 +527,26 @@ def statement_years(cells: list[str], years: dict[int, int]) -> dict[int, int]:
         return years
 
     first = clean_label(cells[0]).lower() if cells else ""
-    if is_year_header_row(cells) or first in {"note", "notes"}:
+    if first in {"note", "notes"}:
+        return {idx + 1: year for idx, year in years.items()}
+    if is_year_header_row(cells):
+        if first == "":
+            return years
         return {idx + 1: year for idx, year in years.items()}
     return years
+
+
+def aligns_with_notes_total_header(cells: list[str], previous_cells: list[str] | None) -> bool:
+    if not previous_cells or len(previous_cells) != len(cells):
+        return False
+    previous = [clean_label(cell).lower() for cell in previous_cells]
+    current = [clean_label(cell).lower() for cell in cells]
+    return (
+        any(cell in {"note", "notes"} for cell in previous)
+        and any(cell == "total" for cell in previous)
+        and current
+        and all(YEAR_RE.search(cell) for cell in current if cell)
+    )
 
 
 def classify_section(line: str, current: str | None) -> str | None:
@@ -450,8 +627,13 @@ def upsert_row(rows: dict[str, Row], label: str, values: dict[int, Decimal], sou
         return
     row = rows.setdefault(label, Row(label=label, source_label=source_label))
     if label in AGGREGATE_LABELS and row.source_label and row.source_label != source_label:
-        for year, value in values.items():
-            row.values[year] = row.values.get(year, Decimal("0")) + value
+        if clean_label(source_label).lower().startswith("total "):
+            row.values.update(values)
+        elif clean_label(row.source_label).lower().startswith("total "):
+            return
+        else:
+            for year, value in values.items():
+                row.values[year] = row.values.get(year, Decimal("0")) + value
     else:
         row.values.update(values)
     if not row.source_label:
@@ -488,8 +670,18 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
             income_context = None
         current_section = next_section
         cells = split_row(line)
+        inferred_years = comparative_years_from_line(line)
+        if not cells and inferred_years and current_section in {"income", "balance", "cashflow"} and is_statement_year_header(line):
+            current_years = inferred_years
+            previous_cells = None
+            continue
+
         label_info: tuple[int, str] | None = None
         if not cells:
+            if inferred_years and current_section in {"income", "balance", "cashflow"} and is_statement_year_header(line):
+                current_years = inferred_years
+                previous_cells = None
+                continue
             if current_section == "income" and clean_label(line).lower() == "expenses":
                 income_context = "expenses"
                 continue
@@ -506,10 +698,12 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
             years_in_row = row_years(cells)
             first_label = first_label_cell(cells)
             first_cell_has_money = bool(cells and MONEY_RE.search(cells[0]))
-            if len(years_in_row) >= 1 and (not first_cell_has_money or is_year_header_row(cells)) and (
+            if len(years_in_row) >= 1 and (not first_cell_has_money or is_year_header_row(cells) or is_period_header_row(cells)) and (
                 not first_label or not match_label(first_label[1], INCOME_MAP + ASSET_MAP + LIABILITY_MAP)
             ):
                 filtered_years = statement_years(cells, years_in_row)
+                if aligns_with_notes_total_header(cells, previous_cells):
+                    filtered_years = {idx + 2: year for idx, year in years_in_row.items()}
                 if previous_cells and len(previous_cells) == len(cells):
                     has_statement_type_headers = any(
                         re.search(r"\b(forecast|proforma|actual)\b", cell, re.I)
@@ -520,12 +714,6 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
                             idx: year
                             for idx, year in filtered_years.items()
                             if idx < len(previous_cells) and re.search(r"\b(proforma|actual)\b", previous_cells[idx], re.I)
-                        }
-                    else:
-                        filtered_years = {
-                            idx: year
-                            for idx, year in filtered_years.items()
-                            if idx < len(previous_cells) and "forecast" not in previous_cells[idx].lower()
                         }
                 current_years = filtered_years or statement_years(cells, years_in_row)
                 previous_cells = cells
@@ -539,6 +727,21 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
                         value = parse_decimal(cells[idx])
                         if value is not None:
                             values[year] = value
+                if label_info and match_label(label_info[1], INCOME_MAP + ASSET_MAP + LIABILITY_MAP):
+                    values = fill_empty_amount_cells_as_zero(values, cells, current_years, label_info[0])
+                should_try_sequential_values = (
+                    min(current_years.keys(), default=0) <= 1
+                    or (max(current_years.keys(), default=0) >= len(cells) and len(cells) == len(current_years) + 1)
+                )
+                if (
+                    label_info
+                    and should_try_sequential_values
+                    and not looks_like_note_reference(cells, label_info[0])
+                    and len(values) < min(2, len(current_years))
+                ):
+                    sequential_values = sequential_values_from_cells(cells, label_info[0], current_years)
+                    if len(sequential_values) > len(values):
+                        values = sequential_values
             else:
                 # Handle compact rows such as "Revenue 2025 100 2024 90".
                 numbers = MONEY_RE.findall(line)
@@ -605,7 +808,8 @@ def set_derived(rows: dict[str, Row], label: str, year: int, value: Decimal | No
     if value is None:
         return
     row = rows.setdefault(label, Row(label=label, source_label="computed"))
-    row.values[year] = value
+    if year not in row.values:
+        row.values[year] = value
 
 
 def sum_present(rows: dict[str, Row], labels: Iterable[str], year: int) -> Decimal | None:
@@ -633,6 +837,10 @@ def derive_missing_rows(parsed: ParsedFinancials) -> None:
             set_derived(parsed.income, "Cost of Sales", year, cost_of_sales)
 
         gross_margin = get_value(parsed.income, "Gross Margin", year)
+        if revenue is None and cost_of_sales is not None and gross_margin is not None:
+            set_derived(parsed.income, "Gross Revenue", year, cost_of_sales + gross_margin)
+            revenue = get_value(parsed.income, "Gross Revenue", year)
+
         if gross_margin is None and revenue is not None and cost_of_sales is not None:
             set_derived(parsed.income, "Gross Margin", year, revenue - cost_of_sales)
 
@@ -669,6 +877,7 @@ def derive_missing_rows(parsed: ParsedFinancials) -> None:
                     "Prepaid Expenses & Deposits",
                     "Property & Equipment",
                     "Due from Related Parties",
+                    "Other Assets",
                 ],
                 year,
             )
@@ -869,13 +1078,14 @@ def build_formula_table(selected_years: list[int]) -> list[list[str]]:
     return [
         ["Area", "Line item", "Formula used"],
         ["Input", "Source rows", "Amounts are extracted from the uploaded Income Statement and Balance Sheet"],
+        ["Income Statement", "Gross Revenue", "Cost of Sales + Gross Margin when Gross Revenue is not provided"],
         ["Income Statement", "Cost of Sales", "Materials + Labour + Variable Costs + Fixed Costs when Cost of Sales is not provided"],
         ["Income Statement", "Gross Margin", "Gross Revenue - Cost of Sales"],
         ["Income Statement", "Operating Costs", "Logistics + SG&A + Depreciation + Interest when Operating Costs is not provided"],
         ["Income Statement", "Operating Income", "Gross Margin - Operating Costs"],
         ["Income Statement", "Net Income", "Operating Income - Corporate Tax when Net Income is not provided"],
         ["Income Statement", "EBITDA", "Net Income + Interest + Depreciation + Corporate Tax"],
-        ["Balance Sheet", "Total Assets", "Cash + Accounts receivable + Inventory + Prepaids and deposits + Property and equipment + Due from related parties when Total Assets is not provided"],
+        ["Balance Sheet", "Total Assets", "Cash + Accounts receivable + Inventory + Prepaids and deposits + Property and equipment + Due from related parties + Other assets when Total Assets is not provided"],
         ["Balance Sheet", "Total Liabilities", "Bank indebtedness + Accounts payable + Income taxes payable + Short-term loans + Due to related parties + CEBA loan + Long-term loans when Total Liabilities is not provided"],
         ["Balance Sheet", "Shareholder Equity", "Common Shares + Retained Earnings when Shareholder Equity is not provided"],
         ["Balance Sheet", "TL + SE", "Total Liabilities + Shareholder Equity"],
