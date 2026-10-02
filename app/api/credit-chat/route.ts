@@ -34,37 +34,31 @@ export async function POST(req: NextRequest) {
 
     const headers = await getAzureHeaders()
 
-    const formatInstructions = `You are a senior Canadian credit analyst preparing a credit readiness assessment for a commercial lender. Apply rigorous, lender-grade methodology throughout.
+    const formatInstructions = `Follow the credit-readiness agent's configured methodology exactly.
 
-ANALYTICAL RULES (critical — follow exactly):
-
-1. UNITS: Do NOT assume numbers are in thousands (CAD 000s) unless the financial statements explicitly say so. Many small and mid-size Canadian businesses report in actual dollars. Determine the unit scale from context: look at the revenue figure and the company description. A food distributor or small Ontario business with revenue of $2-5 million is reporting in actual dollars, not thousands. State your unit assumption explicitly at the top and justify it (e.g. "Revenue of $2.6M suggests actual CAD, not CAD 000s"). Apply that unit consistently to every number and conclusion. A 1,000x unit error will make credit capacity conclusions completely wrong.
-
-2. EBITDA: Use the correct formula: EBITDA = Net Income + Interest Expense + Income Taxes + Depreciation + Amortization. Never omit interest expense. If interest expense is not explicitly stated, estimate it from average debt balance × a stated assumed rate (e.g. 5–7%) and flag the assumption clearly.
-
-3. PRINCIPAL REPAYMENTS: Do NOT use the change in total debt as a proxy for principal repayments. Debt balances change for many reasons (refinancing, FX, reclassification). Use the scheduled principal repayments from the cash flow statement if available; otherwise state the limitation explicitly.
-
-4. DSCR / FCCR: Use DSCR = (EBITDA - Unfunded Capex - Taxes Paid) / (Principal + Interest). Use FCCR = (EBITDA + Lease Payments) / (Interest + Principal + Lease Payments). Never assume interest = 0 when material debt exists.
-
-5. ANOMALY INVESTIGATION: Flag and investigate unusual metrics rather than accepting them as positive. Examples: Current ratio > 5 requires explanation (large cash, shareholder receivables, holding structure). ROA > 15% requires explanation (asset-light model, one-time gains, revaluation). Investigate before concluding.
-
-6. INCREMENTAL CREDIT CAPACITY: Base the maximum additional debt on DSCR threshold AND Debt/EBITDA (typical Canadian bank limit: 3.0–4.0x senior). Use the more conservative constraint. Show the sanity check: (Current Debt + New Debt) / EBITDA = X.
-
-7. LENDER PERSPECTIVE: Acknowledge what a lender would require beyond ratios — collateral, covenants, security, industry context, customer concentration, cash flow volatility. Do not present a single-metric conclusion as definitive.
-
-8. LIMITATIONS: Explicitly state what data is missing and how it affects the analysis (e.g. no interest expense line, no debt maturity schedule, no notes to financial statements).
-
-FORMATTING RULES:
+App-side formatting guardrails:
+- Use Markdown headings and Markdown pipe tables only.
 - Do NOT use LaTeX notation. Never write \\[, \\], \\frac{}{}, \\text{}, or any LaTeX math syntax.
-- Show all formulas as plain inline text. Example: FCCR = (EBITDA) / (Interest + Principal) = 333253 / 77777 = 4.28
-- Output metric tables as plain CSV with headers: Metric,Value,Benchmark,Assessment
-- Use ### headings to separate sections: ### Units and Data Quality, ### EBITDA Build, ### Key Credit Metrics, ### Anomaly Flags, ### Incremental Credit Capacity, ### Limitations
-- Keep each section concise. State the formula, result, and one-line interpretation.
+- Show formulas as plain inline text.
+- Do not create separate CSV sections or headings that end in "CSV".
+- Apply the agent's missing-information gate before producing the final report. If lender-grade DSCR, FCCR, debt capacity, or readiness conclusions require missing documents or data, do not produce the final report yet. Instead, ask for the missing documentation/details first and briefly state what can and cannot be calculated.
+- When, and only when, producing the final credit-readiness report, preserve the required main report structure exactly:
+  # Canadian Commercial Credit Readiness Assessment
+  ## 1. Credit Snapshot
+  ## 2. Basis of Analysis and Data Quality
+  ## 3. Financial Performance
+  ## 4. Leverage and Debt Service
+  ## 5. Liquidity and Working Capital
+  ## 6. Key Credit Risks, Mitigants, and Required Follow-Up
+  ## 7. Indicative Debt Capacity
+  ## 8. Credit Readiness Conclusion
+- In a final report, do not rename, omit, merge, or reorder those eight sections.
+- Keep tables concise enough to render cleanly in the app and PDF export.
 - Do not end with an offer to prepare further reports.`
 
     const messageContent = userMessage
       ? `${formatInstructions}\n\n${userMessage}\n\nNormalized financial data:\n${normalizedText}`
-      : `${formatInstructions}\n\nProvide a credit readiness assessment based on the following normalized financial data:\n\n${normalizedText}`
+      : `${formatInstructions}\n\nReview the normalized financial data below. First apply the missing-information gate. If material documentation/details are missing for lender-grade DSCR, FCCR, debt capacity, or readiness conclusions, ask for the missing documentation/details before producing the final report. If the available data is sufficient, produce the final credit readiness assessment.\n\nNormalized financial data:\n${normalizedText}`
 
     const response = await fetch(`${AGENT_ENDPOINT}/openai/v1/responses`, {
       method: 'POST',

@@ -14,7 +14,7 @@ type Message = {
 }
 
 type BlockType = 'table' | 'text' | 'heading'
-type ContentBlock = { type: BlockType; text?: string; rows?: string[][] }
+type ContentBlock = { type: BlockType; text?: string; rows?: string[][]; level?: number }
 
 function isSeparatorLine(line: string) { return /^[\s|:\-+]+$/.test(line) && /[-]/.test(line) }
 function splitFields(line: string, delim: string): string[] {
@@ -25,21 +25,17 @@ function splitFields(line: string, delim: string): string[] {
 function detectDelimiter(line: string): string | null {
   if ((line.match(/\|/g) ?? []).length >= 2) return '|'
   if ((line.match(/\t/g) ?? []).length >= 1) return '\t'
-  if ((line.match(/,/g) ?? []).length >= 1) return ','
+  if (/^(Metric|Item|Measure|Assumption|Constraint|Input|Category|Section)\s*,/i.test(line)) return ','
   return null
 }
 const HEADING_RE = /^\d+\.\s+\S/
-const MD_HEADING_RE = /^#{1,6}\s+(.+)$/
+const MD_HEADING_RE = /^(#{1,6})\s+(.+)$/
 const BOLD_LINE_RE = /^\*\*(.+)\*\*$/
 const ITALIC_LINE_RE = /^\*([^*\n]+)\*$/
 const HR_RE = /^(-{3,}|\*{3,})$/
 const FENCE_RE = /^```/
 const NAME_ERROR_RE = /^#NAME\?/i
 const BOILERPLATE_RE = /^(header explanation|column order\s*[-–]|header:|label,\s*\d{4})/i
-
-function stripThousandsSeparators(content: string): string {
-  return content.replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?!\d)/g, m => m.replace(/,/g, ''))
-}
 
 // Remove LaTeX display blocks \[...\] and inline \(...\), then clean up
 // leftover LaTeX commands like \text{}, \frac{}{}, \approx, etc.
@@ -51,8 +47,15 @@ function stripLatex(content: string): string {
     .replace(/[{}]/g, '')                        // leftover braces
 }
 
+function normalizeHeading(text: string): string {
+  return text
+    .replace(/\s+(CSV|Table)$/i, '')
+    .replace(/^Credit Readiness$/i, 'Credit Readiness Assessment')
+    .trim()
+}
+
 function parseBlocks(rawContent: string): ContentBlock[] {
-  const content = stripThousandsSeparators(stripLatex(rawContent))
+  const content = stripLatex(rawContent)
   const lines = content.split('\n')
   const blocks: ContentBlock[] = []
   let textBuffer: string[] = []
@@ -73,7 +76,11 @@ function parseBlocks(rawContent: string): ContentBlock[] {
     const italicHeading = unquoted.match(ITALIC_LINE_RE)
     if (HEADING_RE.test(unquoted) || mdHeading || boldHeading || italicHeading) {
       flushText()
-      blocks.push({ type: 'heading', text: mdHeading?.[1] ?? boldHeading?.[1] ?? italicHeading?.[1] ?? unquoted })
+      blocks.push({
+        type: 'heading',
+        text: normalizeHeading(mdHeading?.[2] ?? boldHeading?.[1] ?? italicHeading?.[1] ?? unquoted),
+        level: mdHeading ? mdHeading[1].length : HEADING_RE.test(unquoted) ? 2 : 3,
+      })
       i++; continue
     }
     const delim = detectDelimiter(unquoted)
@@ -89,7 +96,7 @@ function parseBlocks(rawContent: string): ContentBlock[] {
           const nt = next.trim()
           if (NAME_ERROR_RE.test(nt) || BOILERPLATE_RE.test(nt)) { j++; continue }
           const nu = nt.startsWith('"') && nt.endsWith('"') ? nt.slice(1, -1) : nt
-          const nd = detectDelimiter(nu)
+          const nd: string | null = delim === ',' && nu.includes(',') ? ',' : detectDelimiter(nu)
           if (nd !== delim) break
           const nf = splitFields(nu, nd)
           if (nf.length !== fields.length) break
@@ -106,6 +113,15 @@ function parseBlocks(rawContent: string): ContentBlock[] {
 
 function tableToCSV(rows: string[][]): string {
   return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
+}
+
+function cleanReportText(text: string): string {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function buildCombinedCSV(blocks: ContentBlock[]): string {
@@ -160,7 +176,12 @@ function ResponseContent({ content }: { content: string }) {
       {blocks.map((block, i) => {
         if (block.type === 'table') return <TableBlock key={i} rows={block.rows!} currency={currency} />
         if (block.type === 'heading') {
-          return <h3 key={i} className="text-title text-an-fg-base font-medium mt-2">{block.text}</h3>
+          const className = block.level === 1
+            ? 'text-[22px] leading-tight text-an-fg-base font-semibold mt-1'
+            : block.level === 2
+              ? 'text-title text-an-fg-base font-medium mt-2'
+              : 'text-body font-medium text-an-fg-base mt-1'
+          return <h3 key={i} className={className}>{block.text}</h3>
         }
         return (
           <p key={i} className="text-body text-an-fg-base whitespace-pre-wrap break-words">{block.text}</p>
@@ -339,73 +360,196 @@ export default function CreditPage() {
     setPdfState(prev => ({ ...prev, [msg.id]: { ...prev[msg.id], generating: true } }))
     try {
       const { jsPDF } = await import('jspdf')
-      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
-      const margin = 40
+      const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'landscape' })
+      const margin = 42
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
       const maxWidth = pageWidth - margin * 2
-      let y = margin
-
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(14)
-      doc.text('Credit Readiness Assessment', margin, y)
-      y += 24
-
+      let y = margin + 10
+      let sectionNumber = 0
       const blocks = parseBlocks(msg.content)
-      for (const block of blocks) {
-        if (block.type === 'heading') {
-          if (y > pageHeight - margin - 20) { doc.addPage(); y = margin }
-          doc.setFont('helvetica', 'bold')
-          doc.setFontSize(11)
-          y += 8
-          doc.text(block.text ?? '', margin, y)
-          y += 16
-        } else if (block.type === 'table') {
-          const rows = block.rows!
-          const colCount = rows[0].length
-          const colWidth = Math.min(maxWidth / colCount, 140)
-          for (let r = 0; r < rows.length; r++) {
-            if (y > pageHeight - margin - 14) { doc.addPage(); y = margin }
-            if (r === 0) {
-              doc.setFont('helvetica', 'bold')
-              doc.setFontSize(8)
-              doc.setFillColor(50, 50, 50)
-              doc.rect(margin, y - 10, maxWidth, 14, 'F')
-              doc.setTextColor(255, 255, 255)
-            } else {
-              doc.setFont('helvetica', 'normal')
-              doc.setFontSize(8)
-              doc.setTextColor(0, 0, 0)
-              if (r % 2 === 0) {
-                doc.setFillColor(245, 245, 243)
-                doc.rect(margin, y - 10, maxWidth, 14, 'F')
-              }
-            }
-            rows[r].forEach((cell, ci) => {
-              const x = margin + ci * colWidth
-              const clipped = doc.splitTextToSize(cell, colWidth - 4)[0] ?? ''
-              doc.text(clipped, x + 2, y)
-            })
-            y += 14
-          }
-          doc.setTextColor(0, 0, 0)
-          y += 6
-        } else {
+      const titleIndex = blocks.findIndex(block => block.type === 'heading' && block.level === 1)
+      const reportTitle = titleIndex >= 0
+        ? cleanReportText(blocks[titleIndex].text ?? 'Credit Readiness Assessment')
+        : 'Credit Readiness Assessment'
+
+      function drawFooter() {
+        const pageCount = doc.getNumberOfPages()
+        for (let page = 1; page <= pageCount; page++) {
+          doc.setPage(page)
+          doc.setDrawColor(210, 226, 238)
+          doc.line(margin, pageHeight - 30, pageWidth - margin, pageHeight - 30)
           doc.setFont('helvetica', 'normal')
-          doc.setFontSize(9)
-          doc.setTextColor(0, 0, 0)
-          for (const line of (block.text ?? '').split('\n')) {
-            const wrapped = doc.splitTextToSize(line || ' ', maxWidth)
-            for (const wl of wrapped) {
-              if (y > pageHeight - margin) { doc.addPage(); y = margin }
-              doc.text(wl, margin, y)
-              y += 13
-            }
-          }
-          y += 4
+          doc.setFontSize(7.5)
+          doc.setTextColor(92, 113, 130)
+          doc.text('Capital Fusion Credit Readiness', margin, pageHeight - 16)
+          doc.text(`Page ${page} of ${pageCount}`, pageWidth - margin, pageHeight - 16, { align: 'right' })
         }
       }
 
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(18)
+      doc.setTextColor(16, 42, 67)
+      doc.text(reportTitle, margin, y)
+      y += 10
+      doc.setDrawColor(31, 111, 158)
+      doc.setLineWidth(1.5)
+      doc.line(margin, y, pageWidth - margin, y)
+      y += 24
+
+      function ensureSpace(height: number) {
+        if (y + height > pageHeight - margin) {
+          doc.addPage()
+          y = margin
+        }
+      }
+
+      function writeWrappedText(text: string, fontSize = 9.5, lineHeight = 13) {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(fontSize)
+        doc.setTextColor(16, 42, 67)
+        const paragraphs = text.split('\n')
+        for (const paragraph of paragraphs) {
+          const clean = cleanReportText(paragraph)
+          const isBullet = /^[-*]\s+/.test(clean)
+          const printable = isBullet ? clean.replace(/^[-*]\s+/, '') : clean
+          const textWidth = isBullet ? maxWidth - 14 : maxWidth
+          const wrapped = doc.splitTextToSize(printable || ' ', textWidth)
+          for (const line of wrapped) {
+            ensureSpace(lineHeight)
+            if (isBullet) {
+              doc.text('-', margin, y)
+              doc.text(line, margin + 14, y)
+            } else {
+              doc.text(line, margin, y)
+            }
+            y += lineHeight
+          }
+        }
+        y += 7
+      }
+
+      function columnWidths(headers: string[]) {
+        const colCount = headers.length
+        const normalized = headers.map(h => h.toLowerCase())
+        if (normalized.join('|') === 'metric|value|benchmark|assessment') {
+          return [0.22, 0.16, 0.22, 0.40].map(width => width * maxWidth)
+        }
+        if (normalized.includes('component') && normalized.some(h => h.includes('notes'))) {
+          return [0.27, 0.19, 0.54].map(width => width * maxWidth)
+        }
+        if (normalized.includes('scenario') || normalized.includes('constraint')) {
+          return [0.24, 0.19, 0.22, 0.35].slice(0, colCount).map(width => width * maxWidth)
+        }
+        if (colCount === 2) return [0.32, 0.68].map(width => width * maxWidth)
+        if (colCount === 3) return [0.28, 0.22, 0.50].map(width => width * maxWidth)
+        if (colCount === 4) return [0.24, 0.18, 0.22, 0.36].map(width => width * maxWidth)
+        if (colCount === 5) return [0.18, 0.14, 0.14, 0.14, 0.40].map(width => width * maxWidth)
+        return Array.from({ length: colCount }, () => maxWidth / colCount)
+      }
+
+      function drawTableRow(
+        row: string[],
+        widths: number[],
+        rowIndex: number,
+        isHeader: boolean,
+        forceHeaderStyle = false
+      ) {
+        const rowPaddingX = 6
+        const rowPaddingY = 5
+        const lineHeight = 10
+        const fontSize = isHeader ? 8.2 : 8
+
+        doc.setFont('helvetica', isHeader ? 'bold' : 'normal')
+        doc.setFontSize(fontSize)
+
+        const wrappedCells = row.map((cell, cellIndex) => {
+          const cellWidth = widths[cellIndex] ?? maxWidth / row.length
+          return doc.splitTextToSize(cleanReportText(cell) || ' ', Math.max(30, cellWidth - rowPaddingX * 2))
+        })
+        const rowHeight = Math.max(22, Math.max(...wrappedCells.map(lines => lines.length)) * lineHeight + rowPaddingY * 2)
+        ensureSpace(rowHeight + 2)
+
+        const headerStyle = isHeader || forceHeaderStyle
+        const fillColor: [number, number, number] = headerStyle
+          ? [31, 111, 158]
+          : rowIndex % 2 === 0
+            ? [246, 251, 255]
+            : [255, 255, 255]
+        const textColor: [number, number, number] = headerStyle ? [255, 255, 255] : [16, 42, 67]
+        doc.setFont('helvetica', headerStyle ? 'bold' : 'normal')
+
+        let x = margin
+        row.forEach((_, cellIndex) => {
+          const width = widths[cellIndex] ?? maxWidth / row.length
+          doc.setFillColor(...fillColor)
+          doc.setDrawColor(210, 226, 238)
+          doc.rect(x, y, width, rowHeight, 'FD')
+          doc.setTextColor(...textColor)
+          const lines = wrappedCells[cellIndex]
+          lines.forEach((line: string, lineIndex: number) => {
+            doc.text(line, x + rowPaddingX, y + rowPaddingY + 8 + lineIndex * lineHeight)
+          })
+          x += width
+        })
+        y += rowHeight
+      }
+
+      function writeTable(rows: string[][]) {
+        const colCount = rows[0]?.length ?? 0
+        if (!colCount) return
+
+        const header = rows[0].map(cleanReportText)
+        const widths = columnWidths(header)
+        drawTableRow(header, widths, 0, true)
+
+        rows.slice(1).forEach((row, rowIndex) => {
+          if (y > pageHeight - margin - 58) {
+            doc.addPage()
+            y = margin
+            drawTableRow(header, widths, 0, true, true)
+          }
+          drawTableRow(row.map(cleanReportText), widths, rowIndex + 1, false)
+        })
+
+        doc.setTextColor(16, 42, 67)
+        y += 14
+      }
+
+      for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+        const block = blocks[blockIndex]
+        if (blockIndex === titleIndex) continue
+        if (block.type === 'heading') {
+          sectionNumber += 1
+          const isMainSection = (block.level ?? 2) <= 2
+          if (isMainSection) {
+            ensureSpace(34)
+            y += sectionNumber === 1 ? 0 : 4
+            doc.setFillColor(236, 247, 253)
+            doc.setDrawColor(177, 216, 237)
+            doc.roundedRect(margin, y, maxWidth, 24, 4, 4, 'FD')
+            doc.setFont('helvetica', 'bold')
+            doc.setFontSize(11)
+            doc.setTextColor(31, 111, 158)
+            doc.text(block.text ?? '', margin + 10, y + 16)
+            y += 36
+          } else {
+            ensureSpace(22)
+            y += 4
+            doc.setFont('helvetica', 'bold')
+            doc.setFontSize(10)
+            doc.setTextColor(16, 42, 67)
+            doc.text(block.text ?? '', margin, y)
+            y += 15
+          }
+        } else if (block.type === 'table') {
+          writeTable(block.rows!)
+        } else {
+          writeWrappedText(block.text ?? '')
+        }
+      }
+
+      drawFooter()
       const blob = doc.output('blob')
       const url = URL.createObjectURL(blob)
       setPdfState(prev => ({ ...prev, [msg.id]: { url, generating: false } }))
