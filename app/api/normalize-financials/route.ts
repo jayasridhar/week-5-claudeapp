@@ -45,7 +45,31 @@ async function enforceDailyLimit(userId: string) {
   }
 }
 
-async function runNormalizer(payload: { fileText: string; fileName?: string; userMessage?: string }) {
+async function runVercelPythonNormalizer(
+  payload: { fileText: string; fileName?: string; userMessage?: string },
+  origin: string
+) {
+  const baseUrl = process.env.NORMALIZER_BACKEND_URL || origin || (
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''
+  )
+  if (!baseUrl) {
+    throw new Error('Financial normalization backend URL is not configured.')
+  }
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/python-normalize-financials`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message = data?.error || `Python normalizer failed with status ${response.status}.`
+    throw new Error(message)
+  }
+  return data as { content: string }
+}
+
+async function runLocalPythonNormalizer(payload: { fileText: string; fileName?: string; userMessage?: string }) {
   const scriptPath = path.join(process.cwd(), 'scripts', 'financial_normalizer.py')
   const input = JSON.stringify(payload)
   let lastError: unknown
@@ -84,6 +108,17 @@ async function runNormalizer(payload: { fileText: string; fileName?: string; use
   throw lastError instanceof Error ? lastError : new Error('Python normalizer failed.')
 }
 
+async function runNormalizer(
+  payload: { fileText: string; fileName?: string; userMessage?: string },
+  origin: string
+) {
+  if (process.env.VERCEL) {
+    return runVercelPythonNormalizer(payload, origin)
+  }
+
+  return runLocalPythonNormalizer(payload)
+}
+
 export async function POST(req: NextRequest) {
   const { fileText = '', fileName = '', userMessage = '', userId = '' } = await req.json()
 
@@ -111,7 +146,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: limitError }, { status: 429 })
     }
 
-    const result = await runNormalizer({ fileText, fileName, userMessage })
+    const result = await runNormalizer({ fileText, fileName, userMessage }, req.nextUrl.origin)
     return NextResponse.json({ content: result.content })
   } catch (err) {
     console.error('[normalize-financials]', err)

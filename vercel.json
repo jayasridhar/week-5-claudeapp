@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/python-normalize-financials.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{.git/**,.next/**,node_modules/**,public/**,app/**,components/**,lib/**,knowledge/**,skills/**,*.md,*.lock,package*.json,pnpm-lock.yaml,tsconfig.json,next.config.mjs,postcss.config.mjs,tailwind.config.ts,scripts/test_*.py}"
+    }
+  }
+}
