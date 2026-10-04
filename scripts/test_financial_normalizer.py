@@ -134,6 +134,63 @@ Total Liabilities and Equity 3,019,868.86 2,766,911.48
         self.assertEqual(parsed.balance["CEBA Loan payable"].values[2023], Decimal("40000"))
         self.assertIn('CEBA Loan payable,0,"40,000"', content)
 
+    def test_plural_statements_of_operations_parse_public_company_income_statement(self) -> None:
+        text = """Premium Brands Holdings Corporation
+Consolidated Statements of Operations
+(in millions of Canadian dollars except per share amounts)
+13 weeks 13 weeks 26 weeks 26 weeks
+ended ended ended ended
+Jun 27, Jun 28, Jun 27, Jun 28,
+2026 2025 2026 2025
+Revenue 2,375.7 1,880.7 4,426.7 3,526.6
+Cost of goods sold 1,947.2 1,526.0 3,612.0 2,856.0
+Gross profit before depreciation, amortization, and plant start-up and restructuring costs 428.5 354.7 814.7 670.6
+Selling, general and administrative expenses before depreciation and
+amortization 219.6 196.2 450.2 392.0
+Operating profit before depreciation, amortization, and plant start-up and restructuring costs 225.0 173.8 396.2 308.9
+Depreciation of capital assets 35.6 24.7 69.8 49.6
+Amortization of intangible assets 8.3 5.4 16.6 11.4
+Interest and other financing costs 44.2 44.7 88.2 86.6
+Change in value of puttable interest in subsidiaries 0.5 1.0 1.0 2.0
+Provision for income taxes (recovery)
+Current 17.6 15.6 28.9 27.1
+Deferred 0.6 0.8 (1.1) 0.3
+Earnings 70.9 27.9 73.8 30.5
+
+Consolidated Balance Sheets
+Jun 27, Jun 28, Dec 27,
+2026 2025 2025
+Cash and cash equivalents 15.3 12.9 29.3
+Accounts receivable 679.9 580.2 570.5
+Inventories 1,392.1 1,010.5 1,045.8
+Total assets 7,207.8 5,973.5 5,947.4
+Long-term debt 2,035.6 1,837.4 1,813.4
+Total liabilities 4,850.3 4,255.7 4,292.0
+Share capital 2,428.0 1,727.5 1,732.5
+Retained earnings (deficit) (138.2) (52.7) (123.3)
+
+Notes to the Interim Condensed Consolidated Financial Statements
+25. Held for sale and discontinued operations
+Revenue 17.6 34.1 64.7 67.4
+Cost of goods sold 15.6 26.9 56.4 54.5
+Earnings 53.6 1.2 50.6 (2.3)
+"""
+        parsed = normalizer.parse_financials(text, "PBHC-Consolidated-FS-2026-q2.pdf")
+        content = normalizer.build_content(parsed)
+
+        self.assertEqual(parsed.income["Gross Revenue"].values[2026], Decimal("4426.7"))
+        self.assertEqual(parsed.income["Gross Revenue"].values[2025], Decimal("3526.6"))
+        self.assertEqual(parsed.income["Cost of Sales"].values[2026], Decimal("3612.0"))
+        self.assertEqual(parsed.income["Gross Margin"].values[2025], Decimal("670.6"))
+        self.assertEqual(parsed.income["SG&A"].values[2026], Decimal("450.2"))
+        self.assertEqual(parsed.income["Depreciation"].values[2026], Decimal("86.4"))
+        self.assertEqual(parsed.income["Operating Income"].values[2026], Decimal("396.2"))
+        self.assertEqual(parsed.income["Interest"].values[2026], Decimal("88.2"))
+        self.assertEqual(parsed.income["Corporate Tax"].values[2026], Decimal("27.8"))
+        self.assertEqual(parsed.income["Net Income"].values[2025], Decimal("30.5"))
+        self.assertIn('Gross Revenue,"4,426.70","3,526.60"', content)
+        self.assertIn("### Income Statement", content)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,12 +33,12 @@ INCOME_MAP: list[tuple[str, str]] = [
     ("Gross Margin", r"\b(gross\s+margin|gross\s+profit)\b"),
     ("Logistics", r"\b(logistics?|freight|shipping|delivery)\b"),
     ("SG&A", r"\b(sg&a|selling.*general|general.*administrative|administrative|office)\b"),
-    ("Depreciation", r"\b(depreciation|amorti[sz]ation)\b"),
-    ("Interest", r"\b(interest)\b"),
     ("Operating Costs", r"\b(operating\s+(costs?|expenses?)|total\s+expenses?)\b"),
-    ("Operating Income", r"\b(operating\s+(income|loss)|income\s+from\s+operations)\b"),
-    ("Corporate Tax", r"\b(corporate\s+tax|income\s+tax(?:es)?|tax\s+expense)\b"),
-    ("Net Income", r"\b(net\s+(income|loss|earnings)|earnings\s+for\s+the\s+year)\b"),
+    ("Operating Income", r"\b(operating\s+(income|loss|profit|earnings)|income\s+from\s+operations)\b"),
+    ("Depreciation", r"\b(depreciation|amorti[sz]ation)\b"),
+    ("Interest", r"\b(financing\s+costs|interest(?!\s+in\s+subsidiaries))\b"),
+    ("Corporate Tax", r"\b(corporate\s+tax|provision\s+for\s+income\s+tax(?:es)?|income\s+tax(?:es)?\s+(expense|recovery)|tax\s+expense)\b"),
+    ("Net Income", r"\b(net\s+(income|loss|earnings)|earnings\s+for\s+the\s+year)\b|^(earnings|profit|loss)$"),
     ("Beginning Retained Earnings", r"\b(beginning\s+retained\s+earnings|retained\s+earnings.*beginning)\b"),
     ("Ending Retained Earnings", r"\b(ending\s+retained\s+earnings|retained\s+earnings.*end)\b"),
 ]
@@ -76,6 +76,8 @@ AGGREGATE_LABELS = {
     "Fixed Costs",
     "Logistics",
     "SG&A",
+    "Depreciation",
+    "Corporate Tax",
     "Prepaid Expenses & Deposits",
     "Other Assets",
     "Accounts Payable & Accrued Liabilities",
@@ -244,9 +246,11 @@ def detect_currency(text: str) -> str:
     lower = text.lower()
     if re.search(r"\binr\b|\brs\.?\b|\brupees?\b|\blakhs?\b|\bcrores?\b", lower):
         return "INR"
+    if re.search(r"\bcad\b|\bcdn\b|canadian dollars?", lower):
+        return "CAD"
     if re.search(r"\busd\b|u\.s\. dollars?|us dollars?", lower):
         return "USD"
-    if re.search(r"\bcad\b|\bcdn\b|canadian dollars?|\bcanada\b|\bontario\b", lower):
+    if re.search(r"\bcanada\b|\bontario\b", lower):
         return "CAD"
     if "$" in text:
         return "Unknown ($ symbol only)"
@@ -479,18 +483,26 @@ def split_loose_financial_line(line: str, current_years: dict[int, int]) -> tupl
     if len(matches) < min(2, len(ordered_years)):
         return None
 
-    label = clean_label(line[: matches[0].start()])
+    value_matches = matches[-len(ordered_years):] if len(matches) > len(ordered_years) else matches
+    label = clean_label(line[: value_matches[0].start()])
     if not label:
         return None
 
     values: dict[int, Decimal] = {}
-    for year, match in zip(ordered_years, matches[: len(ordered_years)]):
+    for year, match in zip(ordered_years, value_matches):
         raw_value = match.group(0).strip()
         value = Decimal("0") if raw_value in {"-", "—", "–"} else parse_decimal(raw_value)
         if value is not None:
             values[year] = value
 
     return (label, values) if values else None
+
+
+def looks_like_continued_label(line: str) -> bool:
+    label = clean_label(line)
+    if not label or parse_decimal(label) is not None or YEAR_RE.search(label):
+        return False
+    return bool(re.search(r"\b(and|of|from|before|with|for|to|in)$", label, re.I))
 
 
 def row_years(cells: list[str]) -> dict[int, int]:
@@ -554,6 +566,9 @@ def classify_section(line: str, current: str | None) -> str | None:
     is_heading = line.lstrip().startswith("#")
     if (
         (is_heading and "notes to financial information" in lower)
+        or "notes to the interim condensed consolidated financial statements" in lower
+        or "notes to the consolidated financial statements" in lower
+        or "notes to financial statements" in lower
         or re.match(r"#+\s*note\b", lower)
         or re.match(r"note\s+\d", lower)
     ):
@@ -568,6 +583,7 @@ def classify_section(line: str, current: str | None) -> str | None:
         "income statement" in lower
         or "statement of income" in lower
         or "statement of operations" in lower
+        or "statements of operations" in lower
         or "profit and loss" in lower
         or "statement of earnings" in lower
         or "statement of loss" in lower
@@ -657,6 +673,7 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
     current_years: dict[int, int] = {}
     previous_cells: list[str] | None = None
     income_context: str | None = None
+    pending_label_prefix: str | None = None
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -668,12 +685,14 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
             current_years = {}
             previous_cells = None
             income_context = None
+            pending_label_prefix = None
         current_section = next_section
         cells = split_row(line)
         inferred_years = comparative_years_from_line(line)
         if not cells and inferred_years and current_section in {"income", "balance", "cashflow"} and is_statement_year_header(line):
             current_years = inferred_years
             previous_cells = None
+            pending_label_prefix = None
             continue
 
         label_info: tuple[int, str] | None = None
@@ -681,20 +700,33 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
             if inferred_years and current_section in {"income", "balance", "cashflow"} and is_statement_year_header(line):
                 current_years = inferred_years
                 previous_cells = None
+                pending_label_prefix = None
                 continue
             if current_section == "income" and clean_label(line).lower() == "expenses":
                 income_context = "expenses"
                 continue
+            if current_section == "income" and clean_label(line).lower().startswith("provision for income tax"):
+                income_context = "income_taxes"
+                continue
             loose_years = YEAR_RE.findall(line)
             if loose_years and not re.search(r"[A-Za-z]", line):
                 current_years = {idx + 1: int(year) for idx, year in enumerate(loose_years)}
+                pending_label_prefix = None
                 continue
             loose = split_loose_financial_line(line, current_years)
             if loose:
                 label, values = loose
+                if pending_label_prefix:
+                    label = clean_label(f"{pending_label_prefix} {label}")
+                    pending_label_prefix = None
             else:
+                if current_section in {"income", "balance"} and looks_like_continued_label(line):
+                    pending_label_prefix = clean_label(line)
+                else:
+                    pending_label_prefix = None
                 continue
         else:
+            pending_label_prefix = None
             years_in_row = row_years(cells)
             first_label = first_label_cell(cells)
             first_cell_has_money = bool(cells and MONEY_RE.search(cells[0]))
@@ -771,16 +803,28 @@ def parse_financials(text: str, file_name: str) -> ParsedFinancials:
             _, label = label_info
 
         if not values:
+            continuation_candidate = clean_label(" ".join(cells)) if cells else ""
             if current_section == "income" and label_info:
                 normalized_heading = clean_label(label_info[1]).lower()
                 if normalized_heading == "expenses":
                     income_context = "expenses"
+                elif normalized_heading.startswith("provision for income tax"):
+                    income_context = "income_taxes"
+            if current_section in {"income", "balance"} and looks_like_continued_label(continuation_candidate):
+                pending_label_prefix = continuation_candidate
             previous_cells = cells
             continue
 
         if current_section in {"cashflow", "notes"}:
             previous_cells = cells
             continue
+
+        if current_section == "income" and income_context == "income_taxes":
+            normalized_label = clean_label(label_info[1] if label_info else label).lower()
+            if normalized_label in {"current", "deferred"}:
+                upsert_row(parsed.income, "Corporate Tax", values, label)
+                previous_cells = cells
+                continue
 
         income_label = match_label(label, INCOME_MAP)
         balance_label = match_label(label, ASSET_MAP + LIABILITY_MAP)
