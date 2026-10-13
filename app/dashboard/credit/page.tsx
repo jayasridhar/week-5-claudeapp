@@ -124,24 +124,6 @@ function cleanReportText(text: string): string {
     .trim()
 }
 
-function looksLikeMissingInfoRequest(content: string): boolean {
-  return /\b(missing|additional|required|needed|not provided|not calculable|follow-up|supporting).{0,120}\b(document|documents|documentation|data|information|details|bank statements|tax returns|debt schedule|loan agreement|support)\b/i.test(content)
-    || /\b(required follow-up|optional follow-up|additional support|supporting documentation|management accounts|accounts receivable aging|a\/r aging|ar aging)\b/i.test(content)
-}
-
-function isFullCreditReport(content: string): boolean {
-  return /Canadian Commercial Credit Readiness Assessment/i.test(content)
-    && /Credit Readiness Conclusion/i.test(content)
-}
-
-function shouldShowAdditionalInfoChoice(content: string): boolean {
-  return looksLikeMissingInfoRequest(content)
-}
-
-function shouldAutoOpenAdditionalInfoDialog(content: string): boolean {
-  return looksLikeMissingInfoRequest(content) && !isFullCreditReport(content)
-}
-
 function buildCombinedCSV(blocks: ContentBlock[]): string {
   const lines: string[] = []
   for (const block of blocks) {
@@ -221,11 +203,9 @@ export default function CreditPage() {
   const [loading, setLoading] = useState(false)
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState('')
-  const [autoRan, setAutoRan] = useState(false)
   const [pdfState, setPdfState] = useState<Record<string, { url?: string; generating?: boolean }>>({})
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
-  const [additionalInfoDialogMessageId, setAdditionalInfoDialogMessageId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -246,13 +226,6 @@ export default function CreditPage() {
       setHasStoredData(true)
     }
   }, [router])
-
-  useEffect(() => {
-    if (hasStoredData && normalizedText && !autoRan && messages.length === 0) {
-      setAutoRan(true)
-      runAssessment(normalizedText, undefined)
-    }
-  }, [hasStoredData, normalizedText, autoRan, messages.length])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -326,9 +299,7 @@ export default function CreditPage() {
       setFileName(extracted.name)
       setNormalizedText(extracted.text)
       setHasStoredData(true)
-      setAutoRan(true)
       setMessages([])
-      runAssessment(extracted.text, undefined)
     } catch {
       setFileError('Failed to read file. Please try again.')
     } finally {
@@ -352,12 +323,7 @@ export default function CreditPage() {
       setFileName(combinedName)
       setNormalizedText(combinedText)
       setHasStoredData(true)
-      setAutoRan(true)
-      setAdditionalInfoDialogMessageId(null)
-      await runAssessment(
-        combinedText,
-        `Additional document uploaded: ${extracted.name}. Recalculate the credit readiness assessment using the original financial data plus this additional document. Produce the full report with all required sections.`
-      )
+      setMessages([])
     } catch {
       setFileError('Failed to read the additional document. Please try again.')
     } finally {
@@ -382,9 +348,6 @@ export default function CreditPage() {
       const assistantId = (Date.now() + 1).toString()
       const assistantMessage: Message = { role: 'assistant', content: data.content, id: assistantId }
       setMessages(prev => [...prev, assistantMessage])
-      if (shouldAutoOpenAdditionalInfoDialog(data.content)) {
-        setAdditionalInfoDialogMessageId(assistantId)
-      }
 
       const userId = localStorage.getItem('userId')
       if (userId) {
@@ -414,14 +377,6 @@ export default function CreditPage() {
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-  }
-
-  async function continueWithoutAdditionalDocs() {
-    setAdditionalInfoDialogMessageId(null)
-    await runAssessment(
-      normalizedText,
-      'No additional documents are available. Continue with the information already provided and generate the complete credit readiness assessment with all required sections. Treat missing documentation as limitations or optional follow-up only.'
-    )
   }
 
   async function handleGeneratePdf(msg: Message) {
@@ -630,7 +585,6 @@ export default function CreditPage() {
     setFileName('')
     setNormalizedText('')
     setHasStoredData(false)
-    setAutoRan(false)
     setMessages([])
     setFileError('')
     localStorage.removeItem('financial_output')
@@ -760,51 +714,6 @@ export default function CreditPage() {
       {/* Chat area */}
       {hasStoredData && (
         <>
-          {additionalInfoDialogMessageId && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-              <div className="w-full max-w-md rounded-xl border border-an-border bg-an-bg-base shadow-xl">
-                <div className="flex items-start justify-between gap-4 border-b border-an-border px-5 py-4">
-                  <div>
-                    <h2 className="text-title text-an-fg-base">Additional information is optional</h2>
-                    <p className="mt-1 text-body-sm text-an-fg-subtle">
-                      You can upload more support and recalculate, or continue now with the information already provided.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setAdditionalInfoDialogMessageId(null)}
-                    className="text-an-fg-muted hover:text-an-fg-base transition-colors"
-                    aria-label="Close additional information dialog"
-                  >
-                    <X size={16} strokeWidth={2} />
-                  </button>
-                </div>
-                <div className="flex flex-col gap-3 px-5 py-5">
-                  <button
-                    onClick={() => additionalFileInputRef.current?.click()}
-                    disabled={loading || fileLoading}
-                    className="flex h-10 items-center justify-center gap-2 rounded-lg bg-an-accent px-4 text-body-sm font-medium text-white hover:bg-an-accent-hover disabled:opacity-50"
-                  >
-                    <Upload size={14} strokeWidth={1.8} />
-                    {fileLoading ? 'Reading document…' : 'Upload additional document and recalculate'}
-                  </button>
-                  <button
-                    onClick={continueWithoutAdditionalDocs}
-                    disabled={loading}
-                    className="flex h-10 items-center justify-center rounded-lg border border-an-border bg-an-bg-surface px-4 text-body-sm font-medium text-an-fg-base hover:border-an-border-strong disabled:opacity-50"
-                  >
-                    No additional docs, continue assessment
-                  </button>
-                  <button
-                    onClick={() => setAdditionalInfoDialogMessageId(null)}
-                    className="text-caption text-an-fg-muted hover:text-an-fg-base transition-colors"
-                  >
-                    Decide later
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-[720px] mx-auto flex flex-col gap-6">
               <input
@@ -838,6 +747,38 @@ export default function CreditPage() {
                 <p className="text-caption text-an-error">{fileError}</p>
               )}
 
+              {messages.length === 0 && !loading && (
+                <div className="rounded-xl border border-an-border bg-an-bg-surface px-5 py-5">
+                  <div className="flex items-start gap-3">
+                    <FileText size={18} strokeWidth={1.5} className="mt-0.5 text-an-accent flex-shrink-0" />
+                    <div className="flex-1">
+                      <h2 className="text-title text-an-fg-base">Ready to run credit assessment</h2>
+                      <p className="mt-1 text-body-sm text-an-fg-subtle">
+                        Additional documents are optional. Add any supporting PDFs, Excel files, DOCX files, CSVs, or TXT notes before running the assessment.
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        <button
+                          onClick={() => additionalFileInputRef.current?.click()}
+                          disabled={fileLoading || loading}
+                          className="flex h-9 items-center gap-2 rounded-lg border border-an-border bg-an-bg-base px-3 text-body-sm text-an-fg-base hover:border-an-border-strong disabled:opacity-50"
+                        >
+                          <Upload size={14} strokeWidth={1.6} />
+                          {fileLoading ? 'Reading document…' : 'Add supporting document'}
+                        </button>
+                        <button
+                          onClick={() => runAssessment(normalizedText, undefined)}
+                          disabled={loading || fileLoading || !normalizedText}
+                          className="flex h-9 items-center gap-2 rounded-lg bg-an-accent px-4 text-body-sm font-medium text-white hover:bg-an-accent-hover disabled:opacity-50"
+                        >
+                          <CreditCard size={14} strokeWidth={1.6} />
+                          Run credit assessment
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {messages.map(msg => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
@@ -851,16 +792,6 @@ export default function CreditPage() {
                       <div className="flex flex-col gap-3">
                         <ResponseContent content={msg.content} />
                         <div className="flex items-center gap-3 pt-1 flex-wrap">
-                          {shouldShowAdditionalInfoChoice(msg.content) && (
-                            <button
-                              onClick={() => setAdditionalInfoDialogMessageId(msg.id)}
-                              disabled={loading || fileLoading}
-                              className="flex items-center gap-1.5 text-caption text-an-accent hover:underline disabled:opacity-50"
-                            >
-                              <Upload size={12} strokeWidth={1.5} />
-                              Provide additional document and recalculate
-                            </button>
-                          )}
                           <a
                             href={URL.createObjectURL(new Blob([buildCombinedCSV(parseBlocks(msg.content))], { type: 'text/csv' }))}
                             download="credit_readiness.csv"
