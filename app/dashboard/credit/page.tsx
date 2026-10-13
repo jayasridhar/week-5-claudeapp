@@ -125,7 +125,8 @@ function cleanReportText(text: string): string {
 }
 
 function looksLikeMissingInfoRequest(content: string): boolean {
-  return /\b(missing|additional|required|needed|not provided|not calculable).{0,90}\b(document|documents|data|information|details|bank statements|tax returns|debt schedule|loan agreement)\b/i.test(content)
+  return /\b(missing|additional|required|needed|not provided|not calculable|follow-up|supporting).{0,120}\b(document|documents|documentation|data|information|details|bank statements|tax returns|debt schedule|loan agreement|support)\b/i.test(content)
+    || /\b(required follow-up|optional follow-up|additional support|supporting documentation|management accounts|accounts receivable aging|a\/r aging|ar aging)\b/i.test(content)
 }
 
 function isFullCreditReport(content: string): boolean {
@@ -134,6 +135,10 @@ function isFullCreditReport(content: string): boolean {
 }
 
 function shouldShowAdditionalInfoChoice(content: string): boolean {
+  return looksLikeMissingInfoRequest(content)
+}
+
+function shouldAutoOpenAdditionalInfoDialog(content: string): boolean {
   return looksLikeMissingInfoRequest(content) && !isFullCreditReport(content)
 }
 
@@ -377,7 +382,7 @@ export default function CreditPage() {
       const assistantId = (Date.now() + 1).toString()
       const assistantMessage: Message = { role: 'assistant', content: data.content, id: assistantId }
       setMessages(prev => [...prev, assistantMessage])
-      if (shouldShowAdditionalInfoChoice(data.content)) {
+      if (shouldAutoOpenAdditionalInfoDialog(data.content)) {
         setAdditionalInfoDialogMessageId(assistantId)
       }
 
@@ -853,7 +858,7 @@ export default function CreditPage() {
                               className="flex items-center gap-1.5 text-caption text-an-accent hover:underline disabled:opacity-50"
                             >
                               <Upload size={12} strokeWidth={1.5} />
-                              Additional information options
+                              Provide additional document and recalculate
                             </button>
                           )}
                           <a
