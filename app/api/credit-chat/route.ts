@@ -11,6 +11,16 @@ import {
 const AGENT_ENDPOINT = process.env.AZURE_AGENT_ENDPOINT_URL!
 const AGENT_NAME = process.env.AZURE_CREDIT_AGENT_NAME!
 
+function isMissingDocsOnlyRequest(message: string | undefined): boolean {
+  if (!message) return false
+  return /\b(what|which|list|show|tell me).{0,60}\b(missing|needed|required|additional).{0,60}\b(document|documents|data|information|details)\b/i.test(message)
+}
+
+function isContinueRequest(message: string | undefined): boolean {
+  if (!message) return false
+  return /\b(continue|keep going|go ahead|proceed|move forward|no additional|nothing else|use what (we|you) have|without additional|no more documents|no more docs)\b/i.test(message)
+}
+
 export async function POST(req: NextRequest) {
   const { normalizedText, userMessage, userId } = await req.json()
   if (!userId) {
@@ -33,6 +43,8 @@ export async function POST(req: NextRequest) {
     }
 
     const headers = await getAzureHeaders()
+    const missingDocsOnly = isMissingDocsOnlyRequest(userMessage)
+    const continueWithAvailableData = isContinueRequest(userMessage)
 
     const formatInstructions = `Follow the credit-readiness agent's configured methodology exactly.
 
@@ -41,8 +53,10 @@ App-side formatting guardrails:
 - Do NOT use LaTeX notation. Never write \\[, \\], \\frac{}{}, \\text{}, or any LaTeX math syntax.
 - Show formulas as plain inline text.
 - Do not create separate CSV sections or headings that end in "CSV".
-- Apply the agent's missing-information gate before producing the final report. If lender-grade DSCR, FCCR, debt capacity, or readiness conclusions require missing documents or data, do not produce the final report yet. Instead, ask for the missing documentation/details first and briefly state what can and cannot be calculated.
-- When, and only when, producing the final credit-readiness report, preserve the required main report structure exactly:
+- Missing documentation is optional follow-up, not a hard stop. Unless the user explicitly asks only for missing documents/data, produce the full credit-readiness report using the available information.
+- If data needed for lender-grade DSCR, FCCR, debt capacity, or readiness conclusions is missing, do not invent values. Show "Not provided" or "Not calculable from provided data" in the relevant table cells, explain the limitation briefly, and list the optional documentation/details in section 6.
+- If the user says continue, keep going, proceed, go ahead, use what is available, or says they have no additional documents, immediately produce the full report using only the available information.
+- When producing the final credit-readiness report, preserve the required main report structure exactly:
   # Canadian Commercial Credit Readiness Assessment
   ## 1. Credit Snapshot
   ## 2. Basis of Analysis and Data Quality
@@ -56,9 +70,15 @@ App-side formatting guardrails:
 - Keep tables concise enough to render cleanly in the app and PDF export.
 - Do not end with an offer to prepare further reports.`
 
+    const taskInstructions = missingDocsOnly
+      ? 'The user is asking specifically for missing documentation/data. Answer that request concisely and do not produce the full report unless the user also asks to continue.'
+      : continueWithAvailableData
+        ? 'The user wants to continue without uploading an additional PDF or other supporting documents. Produce the full eight-section credit readiness assessment now using only the normalized financial data provided. Include missing items as limitations and optional follow-up in section 6.'
+        : 'Produce the full eight-section credit readiness assessment now using the normalized financial data provided. Include missing items as limitations and optional follow-up in section 6 instead of stopping before the report.'
+
     const messageContent = userMessage
-      ? `${formatInstructions}\n\n${userMessage}\n\nNormalized financial data:\n${normalizedText}`
-      : `${formatInstructions}\n\nReview the normalized financial data below. First apply the missing-information gate. If material documentation/details are missing for lender-grade DSCR, FCCR, debt capacity, or readiness conclusions, ask for the missing documentation/details before producing the final report. If the available data is sufficient, produce the final credit readiness assessment.\n\nNormalized financial data:\n${normalizedText}`
+      ? `${formatInstructions}\n\nTask instruction: ${taskInstructions}\n\nUser message:\n${userMessage}\n\nNormalized financial data:\n${normalizedText}`
+      : `${formatInstructions}\n\nTask instruction: ${taskInstructions}\n\nNormalized financial data:\n${normalizedText}`
 
     const response = await fetch(`${AGENT_ENDPOINT}/openai/v1/responses`, {
       method: 'POST',

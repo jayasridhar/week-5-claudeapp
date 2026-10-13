@@ -124,6 +124,19 @@ function cleanReportText(text: string): string {
     .trim()
 }
 
+function looksLikeMissingInfoRequest(content: string): boolean {
+  return /\b(missing|additional|required|needed|not provided|not calculable).{0,90}\b(document|documents|data|information|details|bank statements|tax returns|debt schedule|loan agreement)\b/i.test(content)
+}
+
+function isFullCreditReport(content: string): boolean {
+  return /Canadian Commercial Credit Readiness Assessment/i.test(content)
+    && /Credit Readiness Conclusion/i.test(content)
+}
+
+function shouldShowAdditionalInfoChoice(content: string): boolean {
+  return looksLikeMissingInfoRequest(content) && !isFullCreditReport(content)
+}
+
 function buildCombinedCSV(blocks: ContentBlock[]): string {
   const lines: string[] = []
   for (const block of blocks) {
@@ -207,9 +220,11 @@ export default function CreditPage() {
   const [pdfState, setPdfState] = useState<Record<string, { url?: string; generating?: boolean }>>({})
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
+  const [additionalInfoDialogMessageId, setAdditionalInfoDialogMessageId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const additionalFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const userId = localStorage.getItem('userId')
@@ -238,72 +253,108 @@ export default function CreditPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
+  async function extractFileText(f: File): Promise<{ name: string; text: string } | null> {
+    const userId = localStorage.getItem('userId')
+    if (!userId) {
+      router.replace('/login')
+      return null
+    }
+    if (f.size > MAX_UPLOAD_BYTES) {
+      setFileError(`File is too large. Upload files up to ${formatBytes(MAX_UPLOAD_BYTES)} while testing.`)
+      return null
+    }
+
+    const name = f.name
+    const lower = name.toLowerCase()
+    let text = ''
+
+    if (lower.endsWith('.pdf')) {
+      const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist')
+      GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+      const buf = await f.arrayBuffer()
+      const pdf = await getDocument({ data: buf }).promise
+      const pageCount = pdf.numPages
+      if (pageCount > MAX_PDF_PAGES) {
+        await pdf.destroy()
+        setFileError(`PDF has ${pageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.`)
+        return null
+      }
+      const pages = await Promise.all(
+        Array.from({ length: pdf.numPages }, (_, idx) =>
+          pdf.getPage(idx + 1).then(p => p.getTextContent()).then(tc =>
+            tc.items.map((it: any) => it.str).join(' ')
+          )
+        )
+      )
+      await pdf.destroy()
+      text = pages.join('\n')
+    } else if (lower.endsWith('.docx')) {
+      const mammoth = await import('mammoth')
+      const buf = await f.arrayBuffer()
+      const result = await mammoth.extractRawText({ arrayBuffer: buf })
+      text = result.value
+    } else if (lower.endsWith('.csv') || lower.endsWith('.txt')) {
+      text = await f.text()
+    } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      const XLSX = await import('xlsx')
+      const buf = await f.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      text = wb.SheetNames.map(sname => {
+        const ws = wb.Sheets[sname]
+        return `Sheet: ${sname}\n${XLSX.utils.sheet_to_csv(ws)}`
+      }).join('\n\n')
+    } else {
+      setFileError('Unsupported file type. Use PDF, DOCX, CSV, Excel, or TXT.')
+      return null
+    }
+
+    return { name, text }
+  }
+
   async function handleFile(f: File) {
     setFileLoading(true)
     setFileError('')
     try {
-      const userId = localStorage.getItem('userId')
-      if (!userId) {
-        router.replace('/login')
-        return
-      }
-      if (f.size > MAX_UPLOAD_BYTES) {
-        setFileError(`File is too large. Upload files up to ${formatBytes(MAX_UPLOAD_BYTES)} while testing.`)
-        return
-      }
+      const extracted = await extractFileText(f)
+      if (!extracted) return
 
-      const name = f.name
-      const lower = name.toLowerCase()
-      let text = ''
-
-      if (lower.endsWith('.pdf')) {
-        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist')
-        GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
-        const buf = await f.arrayBuffer()
-        const pdf = await getDocument({ data: buf }).promise
-        const pageCount = pdf.numPages
-        if (pageCount > MAX_PDF_PAGES) {
-          await pdf.destroy()
-          setFileError(`PDF has ${pageCount} pages. Upload PDFs up to ${MAX_PDF_PAGES} pages while testing.`)
-          return
-        }
-        const pages = await Promise.all(
-          Array.from({ length: pdf.numPages }, (_, idx) =>
-            pdf.getPage(idx + 1).then(p => p.getTextContent()).then(tc =>
-              tc.items.map((it: any) => it.str).join(' ')
-            )
-          )
-        )
-        await pdf.destroy()
-        text = pages.join('\n')
-      } else if (lower.endsWith('.docx')) {
-        const mammoth = await import('mammoth')
-        const buf = await f.arrayBuffer()
-        const result = await mammoth.extractRawText({ arrayBuffer: buf })
-        text = result.value
-      } else if (lower.endsWith('.csv') || lower.endsWith('.txt')) {
-        text = await f.text()
-      } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-        const XLSX = await import('xlsx')
-        const buf = await f.arrayBuffer()
-        const wb = XLSX.read(buf, { type: 'array' })
-        text = wb.SheetNames.map(sname => {
-          const ws = wb.Sheets[sname]
-          return `Sheet: ${sname}\n${XLSX.utils.sheet_to_csv(ws)}`
-        }).join('\n\n')
-      } else {
-        setFileError('Unsupported file type. Use PDF, DOCX, CSV, Excel, or TXT.')
-        return
-      }
-
-      setFileName(name)
-      setNormalizedText(text)
+      setFileName(extracted.name)
+      setNormalizedText(extracted.text)
       setHasStoredData(true)
       setAutoRan(true)
       setMessages([])
-      runAssessment(text, undefined)
+      runAssessment(extracted.text, undefined)
     } catch {
       setFileError('Failed to read file. Please try again.')
+    } finally {
+      setFileLoading(false)
+    }
+  }
+
+  async function handleAdditionalFile(f: File) {
+    setFileLoading(true)
+    setFileError('')
+    try {
+      const extracted = await extractFileText(f)
+      if (!extracted) return
+
+      const combinedText = [
+        normalizedText.trim(),
+        `Additional document: ${extracted.name}\n${extracted.text.trim()}`,
+      ].filter(Boolean).join('\n\n')
+      const combinedName = fileName ? `${fileName} + ${extracted.name}` : extracted.name
+
+      setFileName(combinedName)
+      setNormalizedText(combinedText)
+      setHasStoredData(true)
+      setAutoRan(true)
+      setAdditionalInfoDialogMessageId(null)
+      await runAssessment(
+        combinedText,
+        `Additional document uploaded: ${extracted.name}. Recalculate the credit readiness assessment using the original financial data plus this additional document. Produce the full report with all required sections.`
+      )
+    } catch {
+      setFileError('Failed to read the additional document. Please try again.')
     } finally {
       setFileLoading(false)
     }
@@ -324,7 +375,11 @@ export default function CreditPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Request failed.')
       const assistantId = (Date.now() + 1).toString()
-      setMessages(prev => [...prev, { role: 'assistant', content: data.content, id: assistantId }])
+      const assistantMessage: Message = { role: 'assistant', content: data.content, id: assistantId }
+      setMessages(prev => [...prev, assistantMessage])
+      if (shouldShowAdditionalInfoChoice(data.content)) {
+        setAdditionalInfoDialogMessageId(assistantId)
+      }
 
       const userId = localStorage.getItem('userId')
       if (userId) {
@@ -354,6 +409,14 @@ export default function CreditPage() {
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+  }
+
+  async function continueWithoutAdditionalDocs() {
+    setAdditionalInfoDialogMessageId(null)
+    await runAssessment(
+      normalizedText,
+      'No additional documents are available. Continue with the information already provided and generate the complete credit readiness assessment with all required sections. Treat missing documentation as limitations or optional follow-up only.'
+    )
   }
 
   async function handleGeneratePdf(msg: Message) {
@@ -692,8 +755,60 @@ export default function CreditPage() {
       {/* Chat area */}
       {hasStoredData && (
         <>
+          {additionalInfoDialogMessageId && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+              <div className="w-full max-w-md rounded-xl border border-an-border bg-an-bg-base shadow-xl">
+                <div className="flex items-start justify-between gap-4 border-b border-an-border px-5 py-4">
+                  <div>
+                    <h2 className="text-title text-an-fg-base">Additional information is optional</h2>
+                    <p className="mt-1 text-body-sm text-an-fg-subtle">
+                      You can upload more support and recalculate, or continue now with the information already provided.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setAdditionalInfoDialogMessageId(null)}
+                    className="text-an-fg-muted hover:text-an-fg-base transition-colors"
+                    aria-label="Close additional information dialog"
+                  >
+                    <X size={16} strokeWidth={2} />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-3 px-5 py-5">
+                  <button
+                    onClick={() => additionalFileInputRef.current?.click()}
+                    disabled={loading || fileLoading}
+                    className="flex h-10 items-center justify-center gap-2 rounded-lg bg-an-accent px-4 text-body-sm font-medium text-white hover:bg-an-accent-hover disabled:opacity-50"
+                  >
+                    <Upload size={14} strokeWidth={1.8} />
+                    {fileLoading ? 'Reading document…' : 'Upload additional document and recalculate'}
+                  </button>
+                  <button
+                    onClick={continueWithoutAdditionalDocs}
+                    disabled={loading}
+                    className="flex h-10 items-center justify-center rounded-lg border border-an-border bg-an-bg-surface px-4 text-body-sm font-medium text-an-fg-base hover:border-an-border-strong disabled:opacity-50"
+                  >
+                    No additional docs, continue assessment
+                  </button>
+                  <button
+                    onClick={() => setAdditionalInfoDialogMessageId(null)}
+                    className="text-caption text-an-fg-muted hover:text-an-fg-base transition-colors"
+                  >
+                    Decide later
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-[720px] mx-auto flex flex-col gap-6">
+              <input
+                ref={additionalFileInputRef}
+                type="file"
+                accept=".pdf,.docx,.csv,.xlsx,.xls,.txt"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleAdditionalFile(f); e.target.value = '' }}
+              />
 
               {/* File chip / upload control */}
               <div className="flex items-center gap-2">
@@ -714,6 +829,9 @@ export default function CreditPage() {
                   </button>
                 )}
               </div>
+              {fileError && (
+                <p className="text-caption text-an-error">{fileError}</p>
+              )}
 
               {messages.map(msg => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -728,6 +846,16 @@ export default function CreditPage() {
                       <div className="flex flex-col gap-3">
                         <ResponseContent content={msg.content} />
                         <div className="flex items-center gap-3 pt-1 flex-wrap">
+                          {shouldShowAdditionalInfoChoice(msg.content) && (
+                            <button
+                              onClick={() => setAdditionalInfoDialogMessageId(msg.id)}
+                              disabled={loading || fileLoading}
+                              className="flex items-center gap-1.5 text-caption text-an-accent hover:underline disabled:opacity-50"
+                            >
+                              <Upload size={12} strokeWidth={1.5} />
+                              Additional information options
+                            </button>
+                          )}
                           <a
                             href={URL.createObjectURL(new Blob([buildCombinedCSV(parseBlocks(msg.content))], { type: 'text/csv' }))}
                             download="credit_readiness.csv"
